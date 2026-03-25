@@ -43,8 +43,16 @@ from dotenv import load_dotenv
 # Load environment
 load_dotenv()
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add src to path — check both locations (direct src/ and nested tiktok-content-factory/src/)
+_src_dir = Path(__file__).parent / "src"
+_nested_src_dir = Path(__file__).parent / "tiktok-content-factory" / "src"
+if _src_dir.exists():
+    sys.path.insert(0, str(_src_dir))
+elif _nested_src_dir.exists():
+    sys.path.insert(0, str(_nested_src_dir))
+else:
+    sys.path.insert(0, str(_src_dir))
+    sys.path.insert(0, str(_nested_src_dir))
 
 from script_generator import load_app_config, generate_scripts, save_scripts
 from image_generator import (
@@ -313,31 +321,35 @@ def upload_pending():
 
         print(f"  Uploading: {title} → {account}")
 
-        # TODO: Replace with actual upload call based on your preferred method
-        # For now, just mark as uploaded for testing
         try:
-            # Uncomment one of these based on your setup:
+            import requests as req
 
-            # Option 1: Official TikTok API
-            # uploader = TikTokOfficialUploader(access_token=get_token(account))
-            # result = uploader.upload_video(
-            #     entry["video_path"],
-            #     entry["title"],
-            #     hashtags=entry["hashtags"],
-            # )
+            api_key = os.environ.get("UPLOADPOST_API_KEY")
+            if not api_key:
+                print(f"    SKIP: Upload-Post API key not configured. Set UPLOADPOST_API_KEY in .env")
+                continue
 
-            # Option 2: tiktok-uploader package
-            # uploader = TikTokBrowserUploader()
-            # result = uploader.upload_video(
-            #     entry["video_path"],
-            #     entry["description"],
-            #     cookies_path=f"config/cookies/{account.lstrip('@')}.txt",
-            #     hashtags=entry["hashtags"],
-            # )
+            video_path = entry["video_path"]
+            if not os.path.exists(video_path):
+                print(f"    SKIP: Video file not found: {video_path}")
+                continue
 
-            result = {"status": "simulated", "note": "Configure uploader in pipeline.py"}
-            scheduler.mark_uploaded(entry, result)
-            print(f"    Done! ({daily_count + 1}/15 today)")
+            with open(video_path, "rb") as f:
+                files = {"video": f}
+                headers = {"Authorization": f"Bearer {api_key}"}
+                response = req.post(
+                    "https://app.upload-post.com/api/upload",
+                    files=files,
+                    headers=headers,
+                    timeout=300,
+                )
+
+            if response.status_code in (200, 201):
+                result = response.json()
+                scheduler.mark_uploaded(entry, result)
+                print(f"    Done! ({daily_count + 1}/15 today)")
+            else:
+                print(f"    FAILED: Upload-Post returned {response.status_code}: {response.text[:200]}")
 
         except Exception as e:
             print(f"    ERROR: {e}")
