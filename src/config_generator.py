@@ -172,10 +172,36 @@ Output ONLY the JSON. No markdown, no explanation, no code blocks."""
 
 
 def _strip_markdown_json(text: str) -> str:
-    """Robustly strip markdown code fences from JSON responses."""
+    """Robustly extract JSON from Claude responses, handling markdown fences and extra text."""
     match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
     if match:
-        return match.group(1).strip()
+        text = match.group(1).strip()
+    for open_char, close_char in [("{", "}"), ("[", "]")]:
+        start = text.find(open_char)
+        if start == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if c == "\\":
+                escape_next = True
+                continue
+            if c == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == open_char:
+                depth += 1
+            elif c == close_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
     return text
 
 

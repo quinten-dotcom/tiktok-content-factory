@@ -1654,11 +1654,15 @@ def _run_generation(config_path: str, count: int, job_id: str):
         }
 
     except Exception as e:
+        import traceback, sys as _sys
         jobs[job_id] = {
             "status": "error", "message": str(e), "videos_created": 0,
             "pipeline_stages": {"script":[],"images":[],"voice":[],"edit":[],"qa":[],"ready":[]},
         }
-        print(f"Generation error: {e}")
+        print(f"Generation error: {e}", flush=True)
+        traceback.print_exc()
+        _sys.stdout.flush()
+        _sys.stderr.flush()
 
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
