@@ -403,6 +403,23 @@ DASHBOARD_HTML = r"""
         <span id="keys-status" style="font-size:13px;"></span>
       </div>
     </div>
+
+    <div class="settings-section">
+      <h2>Deploy</h2>
+      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Update the live app when new code is pushed to GitHub. Get your deploy hook URL from Railway: your project &rarr; Settings &rarr; Deploy &rarr; Deploy Hook &rarr; copy the URL.</p>
+      <div class="setting-row">
+        <div style="flex:1;"><div class="setting-label">Railway Deploy Hook</div><div class="setting-desc">Paste the webhook URL from Railway settings</div></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span id="hook-status" style="font-size:12px; color:var(--text-tertiary);">Not set</span>
+          <input class="form-input" id="inp-deploy-hook" placeholder="https://backboard.railway.app/..." style="width:320px; font-size:12px; padding:8px 12px;">
+        </div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-secondary" onclick="saveDeployHook()">Save Hook URL</button>
+        <button class="btn btn-primary" onclick="triggerDeploy()">Update to Latest Version</button>
+        <span id="deploy-status" style="font-size:13px;"></span>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -631,6 +648,9 @@ async function loadSettings() {
   document.getElementById('key-fal').style.color = s.keys.fal ? 'var(--green)' : 'var(--red)';
   document.getElementById('key-eleven').textContent = s.keys.elevenlabs ? 'Connected' : 'Missing';
   document.getElementById('key-eleven').style.color = s.keys.elevenlabs ? 'var(--green)' : 'var(--red)';
+  const hasHook = s.deploy_hook;
+  document.getElementById('hook-status').textContent = hasHook ? 'Configured' : 'Not set';
+  document.getElementById('hook-status').style.color = hasHook ? 'var(--green)' : 'var(--text-tertiary)';
 }
 
 // ─── Save keys ───
@@ -656,6 +676,28 @@ async function saveKeys() {
   } catch(e) {
     document.getElementById('keys-status').innerHTML = '<span style="color:var(--red)">Error: '+e.message+'</span>';
   }
+}
+
+// ─── Deploy hook ───
+async function saveDeployHook() {
+  const url = document.getElementById('inp-deploy-hook').value.trim();
+  if (!url) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">Paste a URL first</span>'; return; }
+  const res = await fetch('/api/settings/deploy-hook', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url}) });
+  const data = await res.json();
+  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Hook saved!</span>';
+  document.getElementById('inp-deploy-hook').value = '';
+  document.getElementById('hook-status').textContent = 'Configured';
+  document.getElementById('hook-status').style.color = 'var(--green)';
+}
+
+async function triggerDeploy() {
+  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Deploying...</span>';
+  try {
+    const res = await fetch('/api/deploy', { method:'POST' });
+    const data = await res.json();
+    if (data.error) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; }
+    else { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Deploy triggered! App will update in ~1-2 minutes. Refresh the page after.</span>'; }
+  } catch(e) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+e.message+'</span>'; }
 }
 
 // ─── Status ───
@@ -796,7 +838,8 @@ def get_settings():
             "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "fal": bool(os.environ.get("FAL_KEY")),
             "elevenlabs": bool(os.environ.get("ELEVENLABS_API_KEY")),
-        }
+        },
+        "deploy_hook": bool(os.environ.get("RAILWAY_DEPLOY_HOOK")),
     })
 
 
@@ -836,6 +879,48 @@ def save_keys():
             f.write(f"{k}={v}\n")
 
     return jsonify({"status": "saved", "updated": updated})
+
+
+@app.route("/api/settings/deploy-hook", methods=["POST"])
+def save_deploy_hook():
+    """Save the Railway deploy hook URL."""
+    data = request.json or {}
+    hook_url = data.get("url", "").strip()
+    if not hook_url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    env_path = BASE_DIR / ".env"
+    existing = {}
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    existing[k.strip()] = v.strip()
+
+    existing["RAILWAY_DEPLOY_HOOK"] = hook_url
+    os.environ["RAILWAY_DEPLOY_HOOK"] = hook_url
+
+    with open(env_path, "w") as f:
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
+
+    return jsonify({"status": "saved"})
+
+
+@app.route("/api/deploy", methods=["POST"])
+def trigger_deploy():
+    """Trigger a Railway redeploy via the deploy hook."""
+    import requests as req
+    hook_url = os.environ.get("RAILWAY_DEPLOY_HOOK", "")
+    if not hook_url:
+        return jsonify({"error": "No deploy hook URL configured. Add it in Settings."}), 400
+    try:
+        resp = req.post(hook_url, timeout=10)
+        return jsonify({"status": "triggered", "code": resp.status_code})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def _run_generation(config_path: str, count: int, job_id: str):
