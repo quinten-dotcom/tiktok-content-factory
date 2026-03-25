@@ -281,13 +281,16 @@ DASHBOARD_HTML = r"""
 
     <div class="add-form card">
       <h2>Add New App</h2>
-      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Enter the app name and select the folder with your app info (screenshots, docs, etc). AI generates the full strategy.</p>
-      <div class="form-row" style="margin-bottom:16px;">
+      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Enter the app name and upload files or a folder with your app info. AI generates the full strategy.</p>
+      <div class="form-row" style="margin-bottom:12px;">
         <input class="form-input" id="inp-name" placeholder="App Name" style="flex:1;">
-        <input class="form-input" id="inp-folder" placeholder="Select folder..." style="flex:2; cursor:pointer;" readonly onclick="selectFolder()">
-        <input type="file" id="folder-picker" webkitdirectory directory multiple style="display:none;" onchange="handleFolderSelect(event)">
+        <button class="btn btn-secondary" onclick="selectFiles()" style="white-space:nowrap; font-size:13px;">Upload Files</button>
+        <button class="btn btn-secondary" onclick="selectFolder()" style="white-space:nowrap; font-size:13px;">Upload Folder</button>
         <button class="btn btn-primary" id="add-btn" onclick="addApp()">Generate</button>
       </div>
+      <input type="file" id="file-picker" multiple accept=".txt,.md,.json,.csv,.png,.jpg,.jpeg,.gif,.webp,.pdf" style="display:none;" onchange="handleFileSelect(event)">
+      <input type="file" id="folder-picker" webkitdirectory directory multiple style="display:none;" onchange="handleFolderSelect(event)">
+      <div id="file-preview" style="display:none; margin-bottom:12px; padding:10px 14px; background:var(--surface-2); border-radius:var(--radius-sm); border:1px solid var(--border);"></div>
       <div class="form-status" id="add-status"></div>
     </div>
 
@@ -483,17 +486,48 @@ function renderAppList() {
 // ─── Add app ───
 let selectedFiles = [];
 
+function selectFiles() {
+  document.getElementById('file-picker').click();
+}
+
 function selectFolder() {
   document.getElementById('folder-picker').click();
+}
+
+function handleFileSelect(event) {
+  const files = Array.from(event.target.files);
+  selectedFiles = files;
+  updateFilePreview();
 }
 
 function handleFolderSelect(event) {
   const files = Array.from(event.target.files);
   selectedFiles = files;
-  if (files.length > 0) {
-    const folderName = files[0].webkitRelativePath.split('/')[0];
-    document.getElementById('inp-folder').value = folderName + ' (' + files.length + ' files)';
-  }
+  updateFilePreview();
+}
+
+function updateFilePreview() {
+  const preview = document.getElementById('file-preview');
+  if (!selectedFiles.length) { preview.style.display = 'none'; return; }
+  const imgs = selectedFiles.filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name));
+  const docs = selectedFiles.filter(f => /\.(txt|md|json|csv|pdf)$/i.test(f.name));
+  const other = selectedFiles.length - imgs.length - docs.length;
+  let summary = '<span style="font-size:13px; color:var(--text-secondary);">';
+  const parts = [];
+  if (docs.length) parts.push(docs.length + ' doc' + (docs.length>1?'s':''));
+  if (imgs.length) parts.push(imgs.length + ' image' + (imgs.length>1?'s':''));
+  if (other > 0) parts.push(other + ' other');
+  summary += parts.join(', ') + ' selected';
+  summary += ' <span onclick="clearFiles()" style="color:var(--red); cursor:pointer; margin-left:8px;">Clear</span></span>';
+  preview.innerHTML = summary;
+  preview.style.display = 'block';
+}
+
+function clearFiles() {
+  selectedFiles = [];
+  document.getElementById('file-picker').value = '';
+  document.getElementById('folder-picker').value = '';
+  document.getElementById('file-preview').style.display = 'none';
 }
 
 async function addApp() {
@@ -523,8 +557,7 @@ async function addApp() {
         } else if (j.status === 'done') {
           clearInterval(poll);
           document.getElementById('inp-name').value = '';
-          document.getElementById('inp-folder').value = '';
-          selectedFiles = [];
+          clearFiles();
           document.getElementById('add-status').innerHTML = '<span style="color:var(--green)">App created! Strategy generated.</span>';
           setTimeout(() => document.getElementById('add-status').innerHTML = '', 3000);
           loadApps();
