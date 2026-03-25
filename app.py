@@ -1368,6 +1368,73 @@ def trigger_deploy():
         return jsonify({"status": "error", "message": str(e)})
 
 
+@app.route("/api/deploy-upload", methods=["POST"])
+def deploy_upload():
+    """Accept a zip file upload and deploy it directly. Skips GitHub entirely."""
+    import zipfile
+    import io
+    import shutil
+
+    if "file" not in request.files:
+        return jsonify({"status": "error", "message": "No file uploaded"}), 400
+
+    uploaded = request.files["file"]
+    if not uploaded.filename.endswith(".zip"):
+        return jsonify({"status": "error", "message": "Must be a .zip file"}), 400
+
+    PRESERVE = {".env", "config", "output", "_update_temp", "__pycache__", ".git", "nixpacks.toml"}
+
+    try:
+        zip_data = uploaded.read()
+        temp_dir = BASE_DIR / "_update_temp"
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
+
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            zf.extractall(str(temp_dir))
+
+        # Find top-level: could be flat or nested in one folder
+        items = list(temp_dir.iterdir())
+        if len(items) == 1 and items[0].is_dir():
+            source = items[0]
+        else:
+            source = temp_dir
+
+        updated_files = []
+        for item in source.iterdir():
+            if item.name in PRESERVE:
+                continue
+            dest = BASE_DIR / item.name
+            try:
+                if item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(str(dest))
+                    shutil.copytree(str(item), str(dest))
+                else:
+                    shutil.copy2(str(item), str(dest))
+                updated_files.append(item.name)
+            except Exception as e:
+                print(f"Warning: Could not update {item.name}: {e}")
+
+        shutil.rmtree(str(temp_dir))
+
+        if not updated_files:
+            return jsonify({"status": "ok", "message": "No new files to update."})
+
+        def delayed_restart():
+            time.sleep(2)
+            os._exit(0)
+
+        threading.Thread(target=delayed_restart, daemon=True).start()
+        return jsonify({"status": "ok", "message": f"Updated {len(updated_files)} files! Restarting in 2 seconds."})
+
+    except Exception as e:
+        temp_dir = BASE_DIR / "_update_temp"
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
+        return jsonify({"status": "error", "message": str(e)})
+
+
 def _run_generation(config_path: str, count: int, job_id: str):
     """Background generation with pipeline stage tracking."""
     try:
