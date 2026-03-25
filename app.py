@@ -9,6 +9,7 @@ Run this file and open the URL in your browser.
 
 import os
 import sys
+import io
 import json
 import time
 import threading
@@ -288,7 +289,7 @@ DASHBOARD_HTML = r"""
         <button class="btn btn-secondary" onclick="selectFolder()" style="white-space:nowrap; font-size:13px;">Upload Folder</button>
         <button class="btn btn-primary" id="add-btn" onclick="addApp()">Generate</button>
       </div>
-      <input type="file" id="file-picker" multiple accept=".txt,.md,.json,.csv,.png,.jpg,.jpeg,.gif,.webp,.pdf" style="display:none;" onchange="handleFileSelect(event)">
+      <input type="file" id="file-picker" multiple accept=".txt,.md,.json,.csv,.png,.jpg,.jpeg,.gif,.webp,.pdf,.docx,.doc,.pptx,.ppt,.xlsx,.xls,.rtf,.html" style="display:none;" onchange="handleFileSelect(event)">
       <input type="file" id="folder-picker" webkitdirectory directory multiple style="display:none;" onchange="handleFolderSelect(event)">
       <div id="file-preview" style="display:none; margin-bottom:12px; padding:10px 14px; background:var(--surface-2); border-radius:var(--radius-sm); border:1px solid var(--border);"></div>
       <div class="form-status" id="add-status"></div>
@@ -510,7 +511,7 @@ function updateFilePreview() {
   const preview = document.getElementById('file-preview');
   if (!selectedFiles.length) { preview.style.display = 'none'; return; }
   const imgs = selectedFiles.filter(f => /\.(png|jpg|jpeg|gif|webp)$/i.test(f.name));
-  const docs = selectedFiles.filter(f => /\.(txt|md|json|csv|pdf)$/i.test(f.name));
+  const docs = selectedFiles.filter(f => /\.(txt|md|json|csv|pdf|docx|doc|pptx|xlsx|rtf|html)$/i.test(f.name));
   const other = selectedFiles.length - imgs.length - docs.length;
   let summary = '<span style="font-size:13px; color:var(--text-secondary);">';
   const parts = [];
@@ -971,10 +972,35 @@ def create_app():
         for f in uploaded_files:
             fname = f.filename or ""
             ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-            if ext in ("txt", "md", "json", "csv"):
+            if ext in ("txt", "md", "json", "csv", "html", "rtf"):
                 try:
                     content = f.read().decode("utf-8", errors="ignore")[:2000]
                     documents.append({"filename": fname.split("/")[-1], "content": content})
+                except:
+                    pass
+            elif ext in ("docx",):
+                try:
+                    from zipfile import ZipFile
+                    import re as _re
+                    data = f.read()
+                    with ZipFile(io.BytesIO(data)) as zf:
+                        xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+                    text = _re.sub(r"<[^>]+>", " ", xml)
+                    text = " ".join(text.split())[:3000]
+                    documents.append({"filename": fname.split("/")[-1], "content": text})
+                except Exception as e:
+                    print(f"Warning: Could not read docx {fname}: {e}")
+            elif ext in ("pdf",):
+                try:
+                    data = f.read()
+                    # Basic PDF text extraction
+                    text = data.decode("latin-1", errors="ignore")
+                    # Extract text between stream markers (rough but works for simple PDFs)
+                    import re as _re
+                    chunks = _re.findall(r"\((.*?)\)", text)
+                    extracted = " ".join(chunks)[:2000]
+                    if len(extracted) > 50:
+                        documents.append({"filename": fname.split("/")[-1], "content": extracted})
                 except:
                     pass
             elif ext in ("png", "jpg", "jpeg", "gif", "webp"):
