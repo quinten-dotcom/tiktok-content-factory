@@ -1640,7 +1640,11 @@ def _run_generation(config_path: str, count: int, job_id: str):
                 jobs[job_id]["videos_created"] = videos_created
 
             except Exception as e:
-                print(f"Error on video {i+1}: {e}")
+                import traceback as _tb, sys as _sys
+                print(f"Error on video {i+1}: {e}", flush=True)
+                _tb.print_exc()
+                _sys.stdout.flush()
+                _sys.stderr.flush()
                 # Remove from all stages on error
                 for stage_name in stages:
                     stages[stage_name] = [x for x in stages[stage_name] if x["title"] != title]

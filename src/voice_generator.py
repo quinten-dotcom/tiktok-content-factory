@@ -132,7 +132,18 @@ def generate_voiceover(
         )
     elif engine == "kokoro":
         voice = voice_config.get("kokoro_voice", "af_sarah")
-        return generate_voiceover_kokoro(text, output_path, voice=voice, speaking_speed=speed)
+        try:
+            return generate_voiceover_kokoro(text, output_path, voice=voice, speaking_speed=speed)
+        except Exception as kokoro_err:
+            # Fall back to ElevenLabs if kokoro isn't installed
+            elevenlabs_key = api_key or os.environ.get("ELEVENLABS_API_KEY")
+            if elevenlabs_key:
+                print(f"    Kokoro failed ({kokoro_err}), falling back to ElevenLabs", flush=True)
+                voice_id = voice_config.get("elevenlabs_voice_id", "21m00Tcm4TlvDq8ikWAM")
+                return generate_voiceover_elevenlabs(
+                    text, output_path, voice_id=voice_id, speaking_speed=speed, api_key=elevenlabs_key
+                )
+            raise
     else:
         raise ValueError(f"Unknown voice engine: {engine}")
 
