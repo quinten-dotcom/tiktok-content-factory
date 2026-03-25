@@ -8,9 +8,18 @@ hashtags, and a TikTok caption.
 """
 
 import json
+import re
 import random
 import anthropic
 from pathlib import Path
+
+
+def _strip_markdown_json(text: str) -> str:
+    """Robustly strip markdown code fences from JSON responses."""
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def load_app_config(config_path: str) -> dict:
@@ -167,10 +176,7 @@ def generate_scripts(
         response_text = response.content[0].text.strip()
 
         # Parse JSON — handle potential markdown wrapping
-        if response_text.startswith("```"):
-            response_text = response_text.split("```")[1]
-            if response_text.startswith("json"):
-                response_text = response_text[4:]
+        response_text = _strip_markdown_json(response_text)
 
         scripts = json.loads(response_text)
 

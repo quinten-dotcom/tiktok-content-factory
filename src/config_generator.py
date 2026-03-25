@@ -157,7 +157,19 @@ IMPORTANT RULES:
 - Mix persona genders and ages for variety
 - Make the writing styles genuinely different from each other
 
+{folder_context_section}
+
 Output ONLY the JSON. No markdown, no explanation, no code blocks."""
+
+
+def _strip_markdown_json(text: str) -> str:
+    """Robustly strip markdown code fences from JSON responses."""
+    import re
+    # Match ```json ... ``` or ``` ... ```
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def generate_app_config(
@@ -165,18 +177,39 @@ def generate_app_config(
     app_description: str,
     api_key: str = None,
     model: str = "claude-sonnet-4-20250514",
+    folder_context: dict = None,
 ) -> dict:
     """
     Generate a complete app configuration from just a name and description.
 
     Uses Claude Sonnet (not Haiku) for this since it's a one-time creative task
     and quality matters more than cost here.
+
+    Args:
+        app_name: Name of the app
+        app_description: Description of the app
+        api_key: Anthropic API key
+        model: Claude model to use
+        folder_context: Optional dict with 'documents' and 'images' from uploaded files
     """
     client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Build folder context section if files were uploaded
+    folder_context_section = ""
+    if folder_context:
+        parts = []
+        if folder_context.get("documents"):
+            parts.append("UPLOADED DOCUMENTS (use these to understand the app better):")
+            for doc in folder_context["documents"]:
+                parts.append(f"\n--- {doc['filename']} ---\n{doc['content']}")
+        if folder_context.get("images"):
+            parts.append(f"\n({len(folder_context['images'])} images were also uploaded for reference)")
+        folder_context_section = "\n".join(parts)
 
     prompt = CONFIG_GENERATION_PROMPT.format(
         app_name=app_name,
         app_description=app_description,
+        folder_context_section=folder_context_section,
     )
 
     response = client.messages.create(
@@ -187,12 +220,8 @@ def generate_app_config(
 
     response_text = response.content[0].text.strip()
 
-    # Clean up potential markdown wrapping
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        # Remove first and last lines (```json and ```)
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        response_text = "\n".join(lines)
+    # Clean up potential markdown wrapping (robust approach)
+    response_text = _strip_markdown_json(response_text)
 
     config = json.loads(response_text)
     return config

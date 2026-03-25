@@ -9,10 +9,19 @@ for regeneration.
 """
 
 import os
+import re
 import json
 import base64
 import anthropic
 from pathlib import Path
+
+
+def _strip_markdown_json(text: str) -> str:
+    """Robustly strip markdown code fences from JSON responses."""
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text
 
 
 def encode_image_b64(image_path: str) -> str:
@@ -106,11 +115,8 @@ Be honest and critical. A score below 7 means the video should be regenerated.""
 
     response_text = response.content[0].text.strip()
 
-    # Parse JSON response
-    if response_text.startswith("```"):
-        response_text = response_text.split("```")[1]
-        if response_text.startswith("json"):
-            response_text = response_text[4:]
+    # Parse JSON response — robustly strip markdown
+    response_text = _strip_markdown_json(response_text)
 
     try:
         review = json.loads(response_text)
@@ -180,10 +186,7 @@ Respond in JSON: {{"score": 8, "would_stop_scroll": true, "fix": "suggestion if 
     )
 
     response_text = response.content[0].text.strip()
-    if response_text.startswith("```"):
-        response_text = response_text.split("```")[1]
-        if response_text.startswith("json"):
-            response_text = response_text[4:]
+    response_text = _strip_markdown_json(response_text)
 
     try:
         return json.loads(response_text)
