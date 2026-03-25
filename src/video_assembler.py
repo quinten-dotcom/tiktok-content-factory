@@ -98,7 +98,7 @@ def apply_ken_burns(clip, duration, zoom_range=(1.0, 1.12), pan_range=(-30, 30))
         pil_img = pil_img.resize((w, h), PILImage.LANCZOS)
         return np.array(pil_img)
 
-    return clip.transform(make_frame, apply_to="mask" if clip.mask else None)
+    return clip.transform(make_frame)
 
 
 # ─── TEXT OVERLAY RENDERING ──────────────────────────────────────────────────
@@ -331,7 +331,8 @@ def get_background_music(
         )
 
     # Trim to duration and set volume
-    audio = audio.subclipped(0, duration).with_effects([lambda c: c.volumex(volume)])
+    from moviepy.audio.fx import MultiplyVolume
+    audio = audio.subclipped(0, duration).with_effects([MultiplyVolume(volume)])
 
     return audio
 

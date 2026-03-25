@@ -21,8 +21,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Add src to path — check both locations (direct src/ and nested tiktok-content-factory/src/)
+_src_dir = Path(__file__).parent / "src"
+_nested_src_dir = Path(__file__).parent / "tiktok-content-factory" / "src"
+if _src_dir.exists():
+    sys.path.insert(0, str(_src_dir))
+elif _nested_src_dir.exists():
+    sys.path.insert(0, str(_nested_src_dir))
+else:
+    # Fallback: try both
+    sys.path.insert(0, str(_src_dir))
+    sys.path.insert(0, str(_nested_src_dir))
 
 app = Flask(__name__)
 
@@ -1592,9 +1601,42 @@ def _run_generation(config_path: str, count: int, job_id: str):
                 stages["qa"].append({"title": title, "persona": persona_name})
                 jobs[job_id]["message"] = f"Video {i+1}/{count}: {title} — QA review"
 
-                # Skip QA for now, move to ready
+                # Run QA review via Claude Vision
+                qa_passed = True
+                qa_threshold = float(os.environ.get("QA_THRESHOLD", 7.0))
+                try:
+                    from qa_reviewer import review_video as qa_review, save_review as qa_save
+                    from video_assembler import extract_key_frames as qa_extract
+
+                    qa_frames_dir = video_dir / "qa_frames"
+                    frame_paths = qa_extract(video_path, str(qa_frames_dir))
+                    review = qa_review(
+                        frame_paths=frame_paths,
+                        script=script,
+                        app_config=app_config,
+                        threshold=qa_threshold,
+                    )
+                    qa_save(review, str(video_dir / "qa_review.json"))
+                    qa_score = review.get("overall_score", 0)
+                    qa_passed = review.get("pass", False)
+                    jobs[job_id]["message"] = f"Video {i+1}/{count}: {title} — QA score: {qa_score}/10"
+
+                    if not qa_passed:
+                        print(f"QA FAIL for {title}: {qa_score}/10 (threshold: {qa_threshold})")
+                        # Remove video file, skip to next
+                        import os as _os
+                        try:
+                            _os.remove(video_path)
+                        except OSError:
+                            pass
+                except Exception as qa_err:
+                    print(f"QA review error (continuing anyway): {qa_err}")
+                    qa_passed = True  # Don't block on QA errors
+
                 stages["qa"] = [x for x in stages["qa"] if x["title"] != title]
-                stages["ready"].append({"title": title, "persona": persona_name, "progress": "Ready"})
+
+                if qa_passed:
+                    stages["ready"].append({"title": title, "persona": persona_name, "progress": "Ready"})
 
                 videos_created += 1
                 jobs[job_id]["videos_created"] = videos_created

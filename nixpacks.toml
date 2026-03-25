@@ -1,2 +1,2 @@
 [phases.setup]
-aptPkgs = ["git"]
+aptPkgs = ["git", "ffmpeg", "libsndfile1", "fonts-dejavu-core"]

@@ -37,8 +37,9 @@ def generate_image_schnell(
     """
     key = api_key or os.environ.get("FAL_KEY")
 
+    # Use synchronous endpoint (blocks until result is ready, ~3-5s for Schnell)
     response = requests.post(
-        "https://queue.fal.run/fal-ai/flux/schnell",
+        "https://fal.run/fal-ai/flux/schnell",
         headers={
             "Authorization": f"Key {key}",
             "Content-Type": "application/json",
@@ -49,9 +50,16 @@ def generate_image_schnell(
             "num_images": 1,
             "enable_safety_checker": False,
         },
+        timeout=120,
     )
 
-    # fal.ai returns either an immediate result or a queue response
+    if response.status_code != 200:
+        try:
+            err = response.json()
+        except Exception:
+            err = response.text[:300]
+        raise Exception(f"fal.ai Schnell error (HTTP {response.status_code}): {err}")
+
     result = response.json()
 
     # Check for error responses (e.g., locked account, exhausted balance)
@@ -61,12 +69,9 @@ def generate_image_schnell(
             raise Exception("fal.ai account is locked — add credits at fal.ai/dashboard/billing")
         raise Exception(f"fal.ai error: {detail}")
 
-    if "images" in result:
-        image_url = result["images"][0]["url"]
-    elif "request_id" in result:
-        image_url = _poll_fal_result(result["request_id"], key)
-    else:
-        raise Exception(f"fal.ai error: {response.status_code} — {json.dumps(result)[:200]}")
+    if "images" not in result:
+        raise Exception(f"fal.ai returned no images: {json.dumps(result)[:200]}")
+    image_url = result["images"][0]["url"]
 
     # Download and save
     img_response = requests.get(image_url)
@@ -100,8 +105,9 @@ def generate_image_kontext(
     ref_b64 = base64.b64encode(ref_data).decode("utf-8")
     ref_url = f"data:image/png;base64,{ref_b64}"
 
+    # Use synchronous endpoint (blocks until result is ready, ~10-20s for Kontext)
     response = requests.post(
-        "https://queue.fal.run/fal-ai/flux-pro/kontext",
+        "https://fal.run/fal-ai/flux-pro/kontext",
         headers={
             "Authorization": f"Key {key}",
             "Content-Type": "application/json",
@@ -112,16 +118,21 @@ def generate_image_kontext(
             "image_size": {"width": 1080, "height": 1920},
             "num_images": 1,
         },
+        timeout=180,
     )
+
+    if response.status_code != 200:
+        try:
+            err = response.json()
+        except Exception:
+            err = response.text[:300]
+        raise Exception(f"fal.ai Kontext error (HTTP {response.status_code}): {err}")
 
     result = response.json()
 
-    if "images" in result:
-        image_url = result["images"][0]["url"]
-    elif "request_id" in result:
-        image_url = _poll_fal_result(result["request_id"], key)
-    else:
-        raise Exception(f"Kontext error: {result}")
+    if "images" not in result:
+        raise Exception(f"Kontext returned no images: {json.dumps(result)[:200]}")
+    image_url = result["images"][0]["url"]
 
     img_response = requests.get(image_url)
     img = Image.open(BytesIO(img_response.content))
@@ -130,22 +141,45 @@ def generate_image_kontext(
     return output_path
 
 
-def _poll_fal_result(request_id: str, api_key: str, max_wait: int = 120) -> str:
-    """Poll fal.ai queue until result is ready."""
+def _poll_fal_result(request_id: str, api_key: str, max_wait: int = 120, model_path: str = "fal-ai/flux/schnell") -> str:
+    """Poll fal.ai queue until result is ready.
+
+    Args:
+        request_id: The fal.ai queue request ID
+        api_key: fal.ai API key
+        max_wait: Maximum seconds to wait before timing out
+        model_path: The fal.ai model path (e.g. 'fal-ai/flux/schnell' or 'fal-ai/flux-pro/kontext')
+    """
     start = time.time()
     while time.time() - start < max_wait:
         resp = requests.get(
-            f"https://queue.fal.run/fal-ai/flux/schnell/requests/{request_id}/status",
+            f"https://queue.fal.run/{model_path}/requests/{request_id}/status",
             headers={"Authorization": f"Key {api_key}"},
         )
-        status = resp.json()
+        # Handle non-JSON responses from fal.ai (rate limits, server errors, etc.)
+        try:
+            status = resp.json()
+        except Exception:
+            print(f"fal.ai returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}", flush=True)
+            if resp.status_code == 401:
+                raise Exception("fal.ai API key is invalid or expired. Check FAL_KEY in .env")
+            if resp.status_code == 429:
+                print("fal.ai rate limited, waiting 10s...", flush=True)
+                time.sleep(10)
+                continue
+            time.sleep(3)
+            continue
+
         if status.get("status") == "COMPLETED":
             # Fetch result
             result_resp = requests.get(
-                f"https://queue.fal.run/fal-ai/flux/schnell/requests/{request_id}",
+                f"https://queue.fal.run/{model_path}/requests/{request_id}",
                 headers={"Authorization": f"Key {api_key}"},
             )
-            result_data = result_resp.json()
+            try:
+                result_data = result_resp.json()
+            except Exception:
+                raise Exception(f"fal.ai result response not JSON (HTTP {result_resp.status_code}): {result_resp.text[:200]}")
             if "images" not in result_data:
                 raise Exception(f"fal.ai completed but no images returned: {json.dumps(result_data)[:200]}")
             return result_data["images"][0]["url"]
