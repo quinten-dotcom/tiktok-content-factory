@@ -914,24 +914,44 @@ def save_keys():
 def trigger_deploy():
     """Pull latest code from GitHub and restart the app."""
     import subprocess
+    repo_url = "https://github.com/quinten-dotcom/tiktok-content-factory.git"
     try:
-        # Pull latest from GitHub
-        result = subprocess.run(
-            ["git", "pull", "origin", "master"],
-            cwd=str(BASE_DIR),
-            capture_output=True, text=True, timeout=30,
-        )
-        output = result.stdout + result.stderr
+        # Check if git is available
+        git_check = subprocess.run(["which", "git"], capture_output=True, text=True)
+        if git_check.returncode != 0:
+            return jsonify({"status": "error", "message": "Git not available. Redeploy from Railway dashboard to pick up the fix."})
 
-        if result.returncode != 0:
-            return jsonify({"status": "error", "message": output})
+        git_dir = BASE_DIR / ".git"
+        if not git_dir.exists():
+            # No .git directory (happens with `railway up`) — initialize and fetch
+            subprocess.run(["git", "init"], cwd=str(BASE_DIR), capture_output=True, text=True)
+            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=str(BASE_DIR), capture_output=True, text=True)
+            result = subprocess.run(
+                ["git", "fetch", "origin", "master"],
+                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return jsonify({"status": "error", "message": "Failed to fetch: " + result.stderr})
+            result = subprocess.run(
+                ["git", "reset", "--hard", "origin/master"],
+                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                return jsonify({"status": "error", "message": "Failed to reset: " + result.stderr})
+        else:
+            # Normal git pull
+            result = subprocess.run(
+                ["git", "pull", "origin", "master"],
+                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=60,
+            )
+            output = result.stdout + result.stderr
+            if result.returncode != 0:
+                return jsonify({"status": "error", "message": output})
+            if "Already up to date" in output:
+                return jsonify({"status": "ok", "message": "Already on latest version."})
 
-        if "Already up to date" in output:
-            return jsonify({"status": "ok", "message": "Already on latest version."})
-
-        # Restart by exiting — Railway/Procfile will auto-restart the process
+        # Restart by exiting — Railway will auto-restart the process
         def delayed_restart():
-            import time
             time.sleep(2)
             os._exit(0)
 
