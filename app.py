@@ -212,6 +212,7 @@ DASHBOARD_HTML = r"""
     flex-direction: column; justify-content: flex-end; transition: transform 0.15s;
   }
   .video-card:hover { transform: scale(1.02); }
+  .video-actions { background: linear-gradient(transparent, rgba(0,0,0,0.9)); }
   .vc-gradient { padding: 16px 12px 14px; background: linear-gradient(transparent, rgba(0,0,0,0.85)); }
   .vc-title { font-size: 12px; font-weight: 500; color: white; margin-bottom: 4px; }
   .vc-meta { font-size: 10px; color: rgba(255,255,255,0.5); }
@@ -271,10 +272,13 @@ DASHBOARD_HTML = r"""
 
     <div class="add-form card">
       <h2>Add New App</h2>
-      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Type the name and a one-liner. AI handles strategy, personas, hashtags — everything.</p>
+      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Type the name, description, and optionally point to a folder with app assets (screenshots, docs). AI handles strategy, personas, hashtags — everything.</p>
       <div class="form-row">
         <input class="form-input" id="inp-name" placeholder="App Name">
         <input class="form-input" id="inp-desc" placeholder="One-line description" style="flex:2;">
+      </div>
+      <div class="form-row" style="margin-bottom:16px;">
+        <input class="form-input" id="inp-folder" placeholder="/Users/you/projects/myapp — optional folder with screenshots/docs" style="flex:1;">
         <button class="btn btn-primary" id="add-btn" onclick="addApp()">Generate</button>
       </div>
       <div class="form-status" id="add-status"></div>
@@ -398,10 +402,22 @@ DASHBOARD_HTML = r"""
           <input class="form-input" id="inp-key-eleven" placeholder="elevenlabs key..." style="width:280px; font-size:12px; padding:8px 12px;">
         </div>
       </div>
+      <div class="setting-row">
+        <div style="flex:1;"><div class="setting-label">Upload-Post.com</div><div class="setting-desc">For posting videos to TikTok</div></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span id="key-uploadpost" style="font-size:12px; color:var(--text-tertiary);">Checking...</span>
+          <input class="form-input" id="inp-key-uploadpost" placeholder="upload-post api key..." style="width:280px; font-size:12px; padding:8px 12px;">
+        </div>
+      </div>
       <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
         <button class="btn btn-primary" onclick="saveKeys()">Save Keys</button>
         <span id="keys-status" style="font-size:13px;"></span>
       </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>Connected Accounts</h2>
+      <div class="setting-row"><div><div class="setting-label">TikTok Accounts</div><div class="setting-desc">Via Upload-Post.com integration</div></div><div class="setting-value" id="tiktok-accounts">None connected</div></div>
     </div>
 
     <div class="settings-section">
@@ -458,13 +474,14 @@ function renderAppList() {
 async function addApp() {
   const name = document.getElementById('inp-name').value.trim();
   const desc = document.getElementById('inp-desc').value.trim();
-  if (!name || !desc) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">Fill in both fields</span>'; return; }
+  const folder = document.getElementById('inp-folder').value.trim();
+  if (!name || !desc) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">Fill in name and description</span>'; return; }
   const btn = document.getElementById('add-btn');
   btn.disabled = true; btn.textContent = 'Generating...';
   document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> AI is creating strategy, personas, hashtags...</span>';
   setStatus('Generating strategy...');
   try {
-    const res = await fetch('/api/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, description:desc}) });
+    const res = await fetch('/api/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, description:desc, folder_path: folder || null}) });
     const data = await res.json();
     if (data.error) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready'); return; }
     // Poll for completion
@@ -479,6 +496,7 @@ async function addApp() {
           clearInterval(poll);
           document.getElementById('inp-name').value = '';
           document.getElementById('inp-desc').value = '';
+          document.getElementById('inp-folder').value = '';
           document.getElementById('add-status').innerHTML = '<span style="color:var(--green)">App created! Strategy generated.</span>';
           setTimeout(() => document.getElementById('add-status').innerHTML = '', 3000);
           loadApps();
@@ -631,16 +649,50 @@ async function loadVideos() {
   const grid = document.getElementById('videos-grid');
   if (!videos.length) { grid.innerHTML = '<div class="empty"><h3>No videos yet</h3><p>Generate some videos to see them here</p></div>'; return; }
   const colors = ['#1a1028,#0f1a2e','#1a1020,#1a0f28','#0f1a20,#0a1828','#1a1520,#0f0a28','#1a2010,#1a2820','#20180f,#281a10'];
-  grid.innerHTML = videos.map((v,i) => `
+  grid.innerHTML = videos.map((v,i) => {
+    const appSlug = v.app.toLowerCase().replace(/\\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    return `
     <div class="video-card" style="background:linear-gradient(135deg,${colors[i%colors.length]});">
       <span class="vc-badge ready">Ready</span>
       ${v.score ? '<span class="vc-score">'+v.score+'</span>' : ''}
-      <div class="vc-gradient">
+      <div style="position:absolute; bottom:0; left:0; right:0; padding:12px; display:flex; gap:6px; opacity:0; transition:opacity 0.15s;" class="video-actions">
+        <button class="btn btn-primary" style="flex:1; padding:6px 12px; font-size:11px;" onclick="uploadToTikTok('${appSlug}','${v.filename}')">Upload</button>
+      </div>
+      <div class="vc-gradient" style="transition:background 0.15s;">
         <div class="vc-title">${v.title || v.filename}</div>
         <div class="vc-meta">${v.app || ''}</div>
       </div>
     </div>
-  `).join('');
+  `;}).join('');
+  // Show actions on hover
+  document.querySelectorAll('.video-card').forEach(card => {
+    card.addEventListener('mouseover', () => card.querySelector('.video-actions').style.opacity = '1');
+    card.addEventListener('mouseout', () => card.querySelector('.video-actions').style.opacity = '0');
+  });
+}
+
+async function uploadToTikTok(appSlug, filename) {
+  if (!confirm('Upload this video to TikTok?')) return;
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  try {
+    const res = await fetch('/api/upload/' + appSlug, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filename})
+    });
+    const data = await res.json();
+    if (data.error) {
+      alert('Upload failed: ' + data.error);
+    } else {
+      alert('Video uploaded to TikTok successfully!');
+      loadVideos();
+    }
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Upload';
+  }
 }
 
 // ─── Settings ───
@@ -656,9 +708,9 @@ async function loadSettings() {
   document.getElementById('key-fal').style.color = s.keys.fal ? 'var(--green)' : 'var(--red)';
   document.getElementById('key-eleven').textContent = s.keys.elevenlabs ? 'Connected' : 'Missing';
   document.getElementById('key-eleven').style.color = s.keys.elevenlabs ? 'var(--green)' : 'var(--red)';
-  const hasHook = s.deploy_hook;
-  document.getElementById('hook-status').textContent = hasHook ? 'Configured' : 'Not set';
-  document.getElementById('hook-status').style.color = hasHook ? 'var(--green)' : 'var(--text-tertiary)';
+  document.getElementById('key-uploadpost').textContent = s.keys.uploadpost ? 'Connected' : 'Missing';
+  document.getElementById('key-uploadpost').style.color = s.keys.uploadpost ? 'var(--green)' : 'var(--red)';
+  document.getElementById('tiktok-accounts').textContent = s.keys.uploadpost ? 'Ready to post (via Upload-Post)' : 'Not configured';
 }
 
 // ─── Save keys ───
@@ -667,8 +719,9 @@ async function saveKeys() {
     anthropic: document.getElementById('inp-key-anthropic').value.trim(),
     fal: document.getElementById('inp-key-fal').value.trim(),
     elevenlabs: document.getElementById('inp-key-eleven').value.trim(),
+    uploadpost: document.getElementById('inp-key-uploadpost').value.trim(),
   };
-  if (!data.anthropic && !data.fal && !data.elevenlabs) {
+  if (!data.anthropic && !data.fal && !data.elevenlabs && !data.uploadpost) {
     document.getElementById('keys-status').innerHTML = '<span style="color:var(--red)">Paste at least one key</span>';
     return;
   }
@@ -680,6 +733,7 @@ async function saveKeys() {
     document.getElementById('inp-key-anthropic').value = '';
     document.getElementById('inp-key-fal').value = '';
     document.getElementById('inp-key-eleven').value = '';
+    document.getElementById('inp-key-uploadpost').value = '';
     loadSettings();
   } catch(e) {
     document.getElementById('keys-status').innerHTML = '<span style="color:var(--red)">Error: '+e.message+'</span>';
@@ -757,16 +811,26 @@ def create_app():
     data = request.json
     name = data.get("name", "").strip()
     description = data.get("description", "").strip()
+    folder_path = data.get("folder_path", "").strip() if data.get("folder_path") else None
     if not name or not description:
         return jsonify({"error": "Name and description are required"}), 400
     job_id = f"config_{name.lower().replace(' ','_')}_{int(time.time())}"
     jobs[job_id] = {"status": "running", "message": "Generating strategy with AI..."}
 
-    def _generate(jid, app_name, app_desc):
+    def _generate(jid, app_name, app_desc, folder):
         try:
-            from config_generator import generate_app_config, save_app_config
+            from config_generator import generate_app_config, save_app_config, read_folder_context
             jobs[jid]["message"] = "Creating personas, hashtags, content strategy..."
-            config = generate_app_config(app_name, app_desc)
+
+            folder_context = None
+            if folder:
+                try:
+                    jobs[jid]["message"] = f"Reading app assets from {folder}..."
+                    folder_context = read_folder_context(folder)
+                except Exception as e:
+                    print(f"Warning: Could not read folder {folder}: {e}")
+
+            config = generate_app_config(app_name, app_desc, folder_context=folder_context)
             path = save_app_config(config, str(CONFIG_DIR))
             jobs[jid] = {"status": "done", "message": "App created!", "config": config, "config_path": path}
         except Exception as e:
@@ -780,7 +844,7 @@ def create_app():
                 error_msg = "Anthropic API is overloaded. Try again in a minute."
             jobs[jid] = {"status": "error", "message": error_msg}
 
-    thread = threading.Thread(target=_generate, args=(job_id, name, description), daemon=True)
+    thread = threading.Thread(target=_generate, args=(job_id, name, description, folder_path), daemon=True)
     thread.start()
     return jsonify({"job_id": job_id, "status": "started"})
 
@@ -856,6 +920,115 @@ def list_videos():
     return jsonify(videos[:50])
 
 
+@app.route("/api/upload/<slug>", methods=["POST"])
+def upload_video_to_tiktok(slug):
+    """Upload a specific video to TikTok via Upload-Post.com."""
+    import requests
+
+    api_key = os.environ.get("UPLOADPOST_API_KEY")
+    if not api_key:
+        return jsonify({"error": "Upload-Post API key not configured. Set it in Settings."}), 400
+
+    data = request.json or {}
+    video_filename = data.get("filename")
+    if not video_filename:
+        return jsonify({"error": "Video filename required"}), 400
+
+    # Find the video file
+    video_path = OUTPUT_DIR / slug / video_filename
+    if not video_path.exists():
+        # Also check subdirectories (e.g., YYYY-MM-DD structure)
+        for candidate in (OUTPUT_DIR / slug).rglob("*.mp4"):
+            if candidate.name == video_filename:
+                video_path = candidate
+                break
+        else:
+            return jsonify({"error": f"Video {video_filename} not found"}), 404
+
+    if not video_path.stat().st_size > 0:
+        return jsonify({"error": "Video file is empty"}), 400
+
+    try:
+        # Post to Upload-Post.com
+        with open(video_path, "rb") as f:
+            files = {"video": f}
+            headers = {"Authorization": f"Bearer {api_key}"}
+            response = requests.post(
+                "https://app.upload-post.com/api/upload",
+                files=files,
+                headers=headers,
+                timeout=300,  # 5-minute timeout for upload
+            )
+
+        if response.status_code not in (200, 201):
+            return jsonify({
+                "error": f"Upload-Post API returned {response.status_code}",
+                "details": response.text,
+            }), 400
+
+        result = response.json()
+        return jsonify({
+            "status": "success",
+            "message": "Video uploaded to TikTok",
+            "upload_post_response": result,
+        })
+
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Error: {str(e)}"}), 500
+
+
+@app.route("/api/auto-upload/<slug>", methods=["POST"])
+def auto_upload_all_videos(slug):
+    """Upload all ready videos for an app to TikTok."""
+    import requests
+
+    api_key = os.environ.get("UPLOADPOST_API_KEY")
+    if not api_key:
+        return jsonify({"error": "Upload-Post API key not configured"}), 400
+
+    # Find all videos for this app
+    app_output = OUTPUT_DIR / slug
+    if not app_output.exists():
+        return jsonify({"error": f"App {slug} not found"}), 404
+
+    videos = list(app_output.rglob("*.mp4"))
+    if not videos:
+        return jsonify({"message": "No videos found for this app", "uploaded": []}), 200
+
+    uploaded = []
+    failed = []
+
+    for video_path in videos:
+        try:
+            with open(video_path, "rb") as f:
+                files = {"video": f}
+                headers = {"Authorization": f"Bearer {api_key}"}
+                response = requests.post(
+                    "https://app.upload-post.com/api/upload",
+                    files=files,
+                    headers=headers,
+                    timeout=300,
+                )
+
+            if response.status_code in (200, 201):
+                uploaded.append(video_path.name)
+            else:
+                failed.append({
+                    "filename": video_path.name,
+                    "error": f"Status {response.status_code}",
+                })
+        except Exception as e:
+            failed.append({"filename": video_path.name, "error": str(e)})
+
+    return jsonify({
+        "status": "complete",
+        "uploaded": uploaded,
+        "failed": failed,
+    })
+
+
 @app.route("/api/settings", methods=["GET"])
 def get_settings():
     return jsonify({
@@ -867,6 +1040,7 @@ def get_settings():
             "anthropic": bool(os.environ.get("ANTHROPIC_API_KEY")),
             "fal": bool(os.environ.get("FAL_KEY")),
             "elevenlabs": bool(os.environ.get("ELEVENLABS_API_KEY")),
+            "uploadpost": bool(os.environ.get("UPLOADPOST_API_KEY")),
         },
         "deploy_hook": bool(os.environ.get("RAILWAY_DEPLOY_HOOK")),
     })
@@ -893,6 +1067,7 @@ def save_keys():
         "anthropic": "ANTHROPIC_API_KEY",
         "fal": "FAL_KEY",
         "elevenlabs": "ELEVENLABS_API_KEY",
+        "uploadpost": "UPLOADPOST_API_KEY",
     }
     updated = []
     for field, env_var in key_map.items():

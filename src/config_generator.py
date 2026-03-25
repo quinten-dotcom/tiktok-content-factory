@@ -24,6 +24,7 @@ CONFIG_GENERATION_PROMPT = """You are a TikTok marketing strategist. Given an ap
 
 APP NAME: {app_name}
 APP DESCRIPTION: {app_description}
+{folder_context_prompt}
 
 Generate a full JSON configuration. Be creative and specific. Think about what would actually go viral on TikTok for this type of app.
 
@@ -172,6 +173,7 @@ Output ONLY the JSON. No markdown, no explanation, no code blocks."""
 def generate_app_config(
     app_name: str,
     app_description: str,
+    folder_context: dict = None,
     api_key: str = None,
     model: str = "claude-sonnet-4-20250514",
 ) -> dict:
@@ -180,18 +182,56 @@ def generate_app_config(
 
     Uses Claude Sonnet (not Haiku) for this since it's a one-time creative task
     and quality matters more than cost here.
+
+    Args:
+        app_name: Name of the app
+        app_description: One-line description of the app
+        folder_context: Optional dict with 'images' and 'documents' lists containing
+                       file context to enhance the generation
+        api_key: Anthropic API key (uses env var if not provided)
+        model: Claude model to use
     """
     client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+
+    # Build folder context prompt
+    folder_context_prompt = ""
+    if folder_context:
+        documents = folder_context.get("documents", [])
+        images = folder_context.get("images", [])
+        if documents or images:
+            folder_context_prompt = "\nAPP CONTEXT (from folder):\n"
+            if documents:
+                folder_context_prompt += "Documents:\n"
+                for doc in documents:
+                    folder_context_prompt += f"- {doc['filename']}:\n{doc['content']}\n\n"
+            if images:
+                folder_context_prompt += f"({len(images)} screenshots/images included)\n"
 
     prompt = CONFIG_GENERATION_PROMPT.format(
         app_name=app_name,
         app_description=app_description,
+        folder_context_prompt=folder_context_prompt,
     )
+
+    # Build message with images if provided
+    message_content = [{"type": "text", "text": prompt}]
+
+    if folder_context:
+        images = folder_context.get("images", [])
+        for img in images:
+            message_content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": img["base64"],
+                },
+            })
 
     response = client.messages.create(
         model=model,
         max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": message_content}],
     )
 
     response_text = response.content[0].text.strip()
@@ -223,17 +263,25 @@ def save_app_config(config: dict, config_dir: str = "config") -> str:
     return path
 
 
-def onboard_app(app_name: str, app_description: str, api_key: str = None) -> str:
+def onboard_app(app_name: str, app_description: str, folder_path: str = None, api_key: str = None) -> str:
     """
-    Full onboard: generate config from name + description, save it.
+    Full onboard: generate config from name + description, optionally with folder context, and save it.
 
     Returns the path to the saved config file.
     """
     print(f"\nGenerating full TikTok strategy for: {app_name}")
     print(f"Description: {app_description}")
+
+    folder_context = None
+    if folder_path:
+        print(f"Reading app assets from: {folder_path}")
+        folder_context = read_folder_context(folder_path)
+        if folder_context.get("documents") or folder_context.get("images"):
+            print(f"Found {len(folder_context.get('documents', []))} documents and {len(folder_context.get('images', []))} images")
+
     print("Thinking about content pillars, personas, hashtags, tone...")
 
-    config = generate_app_config(app_name, app_description, api_key=api_key)
+    config = generate_app_config(app_name, app_description, folder_context=folder_context, api_key=api_key)
 
     path = save_app_config(config)
 
@@ -256,6 +304,57 @@ def onboard_app(app_name: str, app_description: str, api_key: str = None) -> str
     print(f"  Ready for: python3 pipeline.py generate --app {path}")
 
     return path
+
+
+def read_folder_context(folder_path: str) -> dict:
+    """
+    Read files from a folder and return structured context.
+
+    Returns:
+        dict with 'documents' list (filename, content) and 'images' list (filename, base64)
+    """
+    import base64
+    import mimetypes
+
+    folder = Path(folder_path)
+    if not folder.exists():
+        return {"documents": [], "images": []}
+
+    documents = []
+    images = []
+
+    for file_path in folder.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        # Read text files
+        if file_path.suffix in [".txt", ".md", ".json"]:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                documents.append({
+                    "filename": file_path.name,
+                    "content": content[:2000],  # Limit to 2000 chars per file
+                })
+            except Exception as e:
+                print(f"Warning: Could not read {file_path}: {e}")
+
+        # Read image files
+        elif file_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
+            try:
+                with open(file_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+                images.append({
+                    "filename": file_path.name,
+                    "base64": b64,
+                })
+            except Exception as e:
+                print(f"Warning: Could not read image {file_path}: {e}")
+
+    return {
+        "documents": documents[:5],  # Limit to 5 documents
+        "images": images[:3],  # Limit to 3 images
+    }
 
 
 if __name__ == "__main__":
