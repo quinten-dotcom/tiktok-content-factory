@@ -376,9 +376,32 @@ DASHBOARD_HTML = r"""
     </div>
     <div class="settings-section">
       <h2>API Keys</h2>
-      <div class="setting-row"><div><div class="setting-label">Anthropic (Claude)</div></div><div class="setting-value" id="key-anthropic" style="color:var(--text-tertiary);">Checking...</div></div>
-      <div class="setting-row"><div><div class="setting-label">fal.ai (Flux)</div></div><div class="setting-value" id="key-fal" style="color:var(--text-tertiary);">Checking...</div></div>
-      <div class="setting-row"><div><div class="setting-label">ElevenLabs</div></div><div class="setting-value" id="key-eleven" style="color:var(--text-tertiary);">Checking...</div></div>
+      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Paste your keys below. They're saved to the server and never exposed in the UI after saving.</p>
+      <div class="setting-row">
+        <div style="flex:1;"><div class="setting-label">Anthropic (Claude)</div><div class="setting-desc">For script generation and QA review</div></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span id="key-anthropic" style="font-size:12px; color:var(--text-tertiary);">Checking...</span>
+          <input class="form-input" id="inp-key-anthropic" placeholder="sk-ant-..." style="width:280px; font-size:12px; padding:8px 12px;">
+        </div>
+      </div>
+      <div class="setting-row">
+        <div style="flex:1;"><div class="setting-label">fal.ai (Flux)</div><div class="setting-desc">For AI image generation</div></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span id="key-fal" style="font-size:12px; color:var(--text-tertiary);">Checking...</span>
+          <input class="form-input" id="inp-key-fal" placeholder="fal key..." style="width:280px; font-size:12px; padding:8px 12px;">
+        </div>
+      </div>
+      <div class="setting-row">
+        <div style="flex:1;"><div class="setting-label">ElevenLabs</div><div class="setting-desc">For voiceover generation</div></div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span id="key-eleven" style="font-size:12px; color:var(--text-tertiary);">Checking...</span>
+          <input class="form-input" id="inp-key-eleven" placeholder="elevenlabs key..." style="width:280px; font-size:12px; padding:8px 12px;">
+        </div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+        <button class="btn btn-primary" onclick="saveKeys()">Save Keys</button>
+        <span id="keys-status" style="font-size:13px;"></span>
+      </div>
     </div>
   </div>
 </div>
@@ -610,6 +633,31 @@ async function loadSettings() {
   document.getElementById('key-eleven').style.color = s.keys.elevenlabs ? 'var(--green)' : 'var(--red)';
 }
 
+// ─── Save keys ───
+async function saveKeys() {
+  const data = {
+    anthropic: document.getElementById('inp-key-anthropic').value.trim(),
+    fal: document.getElementById('inp-key-fal').value.trim(),
+    elevenlabs: document.getElementById('inp-key-eleven').value.trim(),
+  };
+  if (!data.anthropic && !data.fal && !data.elevenlabs) {
+    document.getElementById('keys-status').innerHTML = '<span style="color:var(--red)">Paste at least one key</span>';
+    return;
+  }
+  document.getElementById('keys-status').innerHTML = '<span style="color:var(--text-secondary)">Saving...</span>';
+  try {
+    const res = await fetch('/api/settings/keys', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const result = await res.json();
+    document.getElementById('keys-status').innerHTML = '<span style="color:var(--green)">Saved! ' + result.updated.join(', ') + '</span>';
+    document.getElementById('inp-key-anthropic').value = '';
+    document.getElementById('inp-key-fal').value = '';
+    document.getElementById('inp-key-eleven').value = '';
+    loadSettings();
+  } catch(e) {
+    document.getElementById('keys-status').innerHTML = '<span style="color:var(--red)">Error: '+e.message+'</span>';
+  }
+}
+
 // ─── Status ───
 function setStatus(msg) {
   document.getElementById('status-text').textContent = msg;
@@ -750,6 +798,44 @@ def get_settings():
             "elevenlabs": bool(os.environ.get("ELEVENLABS_API_KEY")),
         }
     })
+
+
+@app.route("/api/settings/keys", methods=["POST"])
+def save_keys():
+    """Save API keys — writes to .env and sets in current process."""
+    data = request.json or {}
+    env_path = BASE_DIR / ".env"
+
+    # Read existing .env
+    existing = {}
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line and not line.startswith("#"):
+                    k, v = line.split("=", 1)
+                    existing[k.strip()] = v.strip()
+
+    # Update with new keys (only if non-empty)
+    key_map = {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "fal": "FAL_KEY",
+        "elevenlabs": "ELEVENLABS_API_KEY",
+    }
+    updated = []
+    for field, env_var in key_map.items():
+        val = data.get(field, "").strip()
+        if val:
+            existing[env_var] = val
+            os.environ[env_var] = val
+            updated.append(field)
+
+    # Write .env back
+    with open(env_path, "w") as f:
+        for k, v in existing.items():
+            f.write(f"{k}={v}\n")
+
+    return jsonify({"status": "saved", "updated": updated})
 
 
 def _run_generation(config_path: str, count: int, job_id: str):
