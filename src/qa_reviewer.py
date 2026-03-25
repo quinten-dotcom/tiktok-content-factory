@@ -9,10 +9,45 @@ for regeneration.
 """
 
 import os
+import re
 import json
 import base64
 import anthropic
 from pathlib import Path
+
+
+def _strip_markdown_json(text: str) -> str:
+    """Robustly extract JSON from Claude responses, handling markdown fences and extra text."""
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    for open_char, close_char in [("{", "}"), ("[", "]")]:
+        start = text.find(open_char)
+        if start == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if c == "\\":
+                escape_next = True
+                continue
+            if c == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == open_char:
+                depth += 1
+            elif c == close_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return text
 
 
 def encode_image_b64(image_path: str) -> str:
@@ -106,11 +141,8 @@ Be honest and critical. A score below 7 means the video should be regenerated.""
 
     response_text = response.content[0].text.strip()
 
-    # Parse JSON response
-    if response_text.startswith("```"):
-        response_text = response_text.split("```")[1]
-        if response_text.startswith("json"):
-            response_text = response_text[4:]
+    # Parse JSON response — robustly strip markdown
+    response_text = _strip_markdown_json(response_text)
 
     try:
         review = json.loads(response_text)
@@ -180,10 +212,7 @@ Respond in JSON: {{"score": 8, "would_stop_scroll": true, "fix": "suggestion if 
     )
 
     response_text = response.content[0].text.strip()
-    if response_text.startswith("```"):
-        response_text = response_text.split("```")[1]
-        if response_text.startswith("json"):
-            response_text = response_text[4:]
+    response_text = _strip_markdown_json(response_text)
 
     try:
         return json.loads(response_text)

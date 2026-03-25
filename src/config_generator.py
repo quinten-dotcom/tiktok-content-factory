@@ -15,6 +15,7 @@ Claude provides: everything else
 """
 
 import json
+import re
 import anthropic
 import os
 from pathlib import Path
@@ -170,6 +171,40 @@ IMPORTANT RULES:
 Output ONLY the JSON. No markdown, no explanation, no code blocks."""
 
 
+def _strip_markdown_json(text: str) -> str:
+    """Robustly extract JSON from Claude responses, handling markdown fences and extra text."""
+    match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    for open_char, close_char in [("{", "}"), ("[", "]")]:
+        start = text.find(open_char)
+        if start == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape_next = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if escape_next:
+                escape_next = False
+                continue
+            if c == "\\":
+                escape_next = True
+                continue
+            if c == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == open_char:
+                depth += 1
+            elif c == close_char:
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+    return text
+
+
 def generate_app_config(
     app_name: str,
     app_description: str,
@@ -193,13 +228,13 @@ def generate_app_config(
     """
     client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
 
-    # Build folder context prompt
+    # Build folder context prompt from uploaded documents
     folder_context_prompt = ""
     if folder_context:
         documents = folder_context.get("documents", [])
         images = folder_context.get("images", [])
         if documents or images:
-            folder_context_prompt = "\nAPP CONTEXT (from folder):\n"
+            folder_context_prompt = "\nAPP CONTEXT (from uploaded files):\n"
             if documents:
                 folder_context_prompt += "Documents:\n"
                 for doc in documents:
@@ -213,7 +248,7 @@ def generate_app_config(
         folder_context_prompt=folder_context_prompt,
     )
 
-    # Build message with images if provided
+    # Build message with images if provided (sent to Claude Vision)
     message_content = [{"type": "text", "text": prompt}]
 
     if folder_context:
@@ -236,12 +271,8 @@ def generate_app_config(
 
     response_text = response.content[0].text.strip()
 
-    # Clean up potential markdown wrapping
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        # Remove first and last lines (```json and ```)
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        response_text = "\n".join(lines)
+    # Clean up potential markdown wrapping (robust approach)
+    response_text = _strip_markdown_json(response_text)
 
     config = json.loads(response_text)
     return config
@@ -293,13 +324,13 @@ def onboard_app(app_name: str, app_description: str, folder_path: str = None, ap
     print(f"{'='*50}")
     print(f"\n  Content Pillars:")
     for p in config.get("content_pillars", []):
-        print(f"    • {p}")
+        print(f"    - {p}")
     print(f"\n  Personas:")
     for p in config.get("personas", []):
-        print(f"    • {p['name']} — {p['archetype']}")
+        print(f"    - {p['name']} — {p['archetype']}")
     print(f"\n  CTAs:")
     for c in config.get("cta_variations", []):
-        print(f"    • {c}")
+        print(f"    - {c}")
     print(f"\n  Config saved to: {path}")
     print(f"  Ready for: python3 pipeline.py generate --app {path}")
 
@@ -314,7 +345,6 @@ def read_folder_context(folder_path: str) -> dict:
         dict with 'documents' list (filename, content) and 'images' list (filename, base64)
     """
     import base64
-    import mimetypes
 
     folder = Path(folder_path)
     if not folder.exists():

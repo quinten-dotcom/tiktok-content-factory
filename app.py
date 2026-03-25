@@ -29,7 +29,10 @@ if _src_dir.exists():
 elif _nested_src_dir.exists():
     sys.path.insert(0, str(_nested_src_dir))
 else:
+<<<<<<< HEAD
     # Fallback: try both
+=======
+>>>>>>> a1ad04ead4d2232a2a0d5e04a9b5e73502c3bc41
     sys.path.insert(0, str(_src_dir))
     sys.path.insert(0, str(_nested_src_dir))
 
@@ -1623,7 +1626,10 @@ def _run_generation(config_path: str, count: int, job_id: str):
 
                     if not qa_passed:
                         print(f"QA FAIL for {title}: {qa_score}/10 (threshold: {qa_threshold})")
+<<<<<<< HEAD
                         # Remove video file, skip to next
+=======
+>>>>>>> a1ad04ead4d2232a2a0d5e04a9b5e73502c3bc41
                         import os as _os
                         try:
                             _os.remove(video_path)
@@ -1642,7 +1648,11 @@ def _run_generation(config_path: str, count: int, job_id: str):
                 jobs[job_id]["videos_created"] = videos_created
 
             except Exception as e:
-                print(f"Error on video {i+1}: {e}")
+                import traceback as _tb, sys as _sys
+                print(f"Error on video {i+1}: {e}", flush=True)
+                _tb.print_exc()
+                _sys.stdout.flush()
+                _sys.stderr.flush()
                 # Remove from all stages on error
                 for stage_name in stages:
                     stages[stage_name] = [x for x in stages[stage_name] if x["title"] != title]
@@ -1656,11 +1666,15 @@ def _run_generation(config_path: str, count: int, job_id: str):
         }
 
     except Exception as e:
+        import traceback, sys as _sys
         jobs[job_id] = {
             "status": "error", "message": str(e), "videos_created": 0,
             "pipeline_stages": {"script":[],"images":[],"voice":[],"edit":[],"qa":[],"ready":[]},
         }
-        print(f"Generation error: {e}")
+        print(f"Generation error: {e}", flush=True)
+        traceback.print_exc()
+        _sys.stdout.flush()
+        _sys.stderr.flush()
 
 
 # ─── RUN ─────────────────────────────────────────────────────────────────────
