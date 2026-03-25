@@ -281,13 +281,11 @@ DASHBOARD_HTML = r"""
 
     <div class="add-form card">
       <h2>Add New App</h2>
-      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Type the name, description, and optionally point to a folder with app assets (screenshots, docs). AI handles strategy, personas, hashtags — everything.</p>
-      <div class="form-row">
-        <input class="form-input" id="inp-name" placeholder="App Name">
-        <input class="form-input" id="inp-desc" placeholder="One-line description" style="flex:2;">
-      </div>
+      <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">Enter the app name and select the folder with your app info (screenshots, docs, etc). AI generates the full strategy.</p>
       <div class="form-row" style="margin-bottom:16px;">
-        <input class="form-input" id="inp-folder" placeholder="/Users/you/projects/myapp — optional folder with screenshots/docs" style="flex:1;">
+        <input class="form-input" id="inp-name" placeholder="App Name" style="flex:1;">
+        <input class="form-input" id="inp-folder" placeholder="Select folder..." style="flex:2; cursor:pointer;" readonly onclick="selectFolder()">
+        <input type="file" id="folder-picker" webkitdirectory directory multiple style="display:none;" onchange="handleFolderSelect(event)">
         <button class="btn btn-primary" id="add-btn" onclick="addApp()">Generate</button>
       </div>
       <div class="form-status" id="add-status"></div>
@@ -460,10 +458,13 @@ function showPage(id) {
 
 // ─── Load apps ───
 async function loadApps() {
-  const res = await fetch('/api/apps');
-  apps = await res.json();
-  renderAppList();
-  renderPipelineSelect();
+  try {
+    const res = await fetch('/api/apps');
+    const text = await res.text();
+    try { apps = JSON.parse(text); } catch(e) { console.error('Bad JSON from /api/apps:', text.slice(0,200)); apps = []; }
+    renderAppList();
+    renderPipelineSelect();
+  } catch(e) { console.error('loadApps failed:', e); apps = []; }
 }
 
 function renderAppList() {
@@ -480,20 +481,38 @@ function renderAppList() {
 }
 
 // ─── Add app ───
+let selectedFiles = [];
+
+function selectFolder() {
+  document.getElementById('folder-picker').click();
+}
+
+function handleFolderSelect(event) {
+  const files = Array.from(event.target.files);
+  selectedFiles = files;
+  if (files.length > 0) {
+    const folderName = files[0].webkitRelativePath.split('/')[0];
+    document.getElementById('inp-folder').value = folderName + ' (' + files.length + ' files)';
+  }
+}
+
 async function addApp() {
   const name = document.getElementById('inp-name').value.trim();
-  const desc = document.getElementById('inp-desc').value.trim();
-  const folder = document.getElementById('inp-folder').value.trim();
-  if (!name || !desc) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">Fill in name and description</span>'; return; }
+  if (!name) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">Enter an app name</span>'; return; }
   const btn = document.getElementById('add-btn');
   btn.disabled = true; btn.textContent = 'Generating...';
-  document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> AI is creating strategy, personas, hashtags...</span>';
+  document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Uploading files & generating strategy...</span>';
   setStatus('Generating strategy...');
   try {
-    const res = await fetch('/api/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, description:desc, folder_path: folder || null}) });
+    // Upload folder files if selected
+    const formData = new FormData();
+    formData.append('name', name);
+    for (const file of selectedFiles) {
+      formData.append('files', file, file.webkitRelativePath || file.name);
+    }
+    const res = await fetch('/api/apps', { method:'POST', body: formData });
     const data = await res.json();
     if (data.error) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready'); return; }
-    // Poll for completion
     const jobId = data.job_id;
     const poll = setInterval(async () => {
       try {
@@ -504,8 +523,8 @@ async function addApp() {
         } else if (j.status === 'done') {
           clearInterval(poll);
           document.getElementById('inp-name').value = '';
-          document.getElementById('inp-desc').value = '';
           document.getElementById('inp-folder').value = '';
+          selectedFiles = [];
           document.getElementById('add-status').innerHTML = '<span style="color:var(--green)">App created! Strategy generated.</span>';
           setTimeout(() => document.getElementById('add-status').innerHTML = '', 3000);
           loadApps();
@@ -858,11 +877,11 @@ function setStatus(msg) {
 
 // ─── Keyboard ───
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && document.activeElement.id === 'inp-desc') addApp();
+  if (e.key === 'Enter' && document.activeElement.id === 'inp-name') addApp();
 });
 
 // Boot
-loadApps();
+loadApps().then(() => setStatus('Ready')).catch(() => setStatus('Ready'));
 </script>
 </body>
 </html>
@@ -883,8 +902,11 @@ def list_apps():
         if config_file.name == "example_app.json":
             continue
         try:
-            with open(config_file) as f:
-                config = json.load(f)
+            raw = config_file.read_text().strip()
+            if not raw or not raw.startswith("{"):
+                print(f"Skipping corrupted config: {config_file}")
+                continue
+            config = json.loads(raw)
             slug = config_file.stem
             video_count = 0
             app_output = OUTPUT_DIR / slug
@@ -900,35 +922,58 @@ def list_apps():
 
 @app.route("/api/apps", methods=["POST"])
 def create_app():
-    """Start async config generation — returns a job_id to poll."""
-    data = request.json
-    name = data.get("name", "").strip()
-    description = data.get("description", "").strip()
-    folder_path = data.get("folder_path", "").strip() if data.get("folder_path") else None
-    if not name or not description:
-        return jsonify({"error": "Name and description are required"}), 400
+    """Start async config generation — accepts FormData with optional file uploads."""
+    import base64 as b64mod
+
+    name = request.form.get("name", "").strip()
+    if not name:
+        return jsonify({"error": "App name is required"}), 400
+
+    # Process uploaded files into folder_context
+    folder_context = None
+    uploaded_files = request.files.getlist("files")
+    if uploaded_files:
+        documents = []
+        images = []
+        for f in uploaded_files:
+            fname = f.filename or ""
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            if ext in ("txt", "md", "json", "csv"):
+                try:
+                    content = f.read().decode("utf-8", errors="ignore")[:2000]
+                    documents.append({"filename": fname.split("/")[-1], "content": content})
+                except:
+                    pass
+            elif ext in ("png", "jpg", "jpeg", "gif", "webp"):
+                try:
+                    data = f.read()
+                    if len(data) < 5 * 1024 * 1024:  # Skip files over 5MB
+                        images.append({"filename": fname.split("/")[-1], "base64": b64mod.b64encode(data).decode("utf-8")})
+                except:
+                    pass
+        if documents or images:
+            folder_context = {"documents": documents[:5], "images": images[:3]}
+
     job_id = f"config_{name.lower().replace(' ','_')}_{int(time.time())}"
     jobs[job_id] = {"status": "running", "message": "Generating strategy with AI..."}
 
-    def _generate(jid, app_name, app_desc, folder):
+    def _generate(jid, app_name, ctx):
         try:
-            from config_generator import generate_app_config, save_app_config, read_folder_context
+            from config_generator import generate_app_config, save_app_config
             jobs[jid]["message"] = "Creating personas, hashtags, content strategy..."
 
-            folder_context = None
-            if folder:
-                try:
-                    jobs[jid]["message"] = f"Reading app assets from {folder}..."
-                    folder_context = read_folder_context(folder)
-                except Exception as e:
-                    print(f"Warning: Could not read folder {folder}: {e}")
+            # Auto-generate description from context
+            desc = f"{app_name} app"
+            if ctx and ctx.get("documents"):
+                # Use first doc content as context hint
+                first_doc = ctx["documents"][0]["content"][:200]
+                desc = f"{app_name} — {first_doc[:100]}"
 
-            config = generate_app_config(app_name, app_desc, folder_context=folder_context)
+            config = generate_app_config(app_name, desc, folder_context=ctx)
             path = save_app_config(config, str(CONFIG_DIR))
             jobs[jid] = {"status": "done", "message": "App created!", "config": config, "config_path": path}
         except Exception as e:
             error_msg = str(e)
-            # Give user-friendly messages for common errors
             if "credit balance" in error_msg.lower() or "billing" in error_msg.lower():
                 error_msg = "Anthropic API has no credits. Add credits at console.anthropic.com"
             elif "authentication" in error_msg.lower() or "api key" in error_msg.lower():
@@ -937,7 +982,7 @@ def create_app():
                 error_msg = "Anthropic API is overloaded. Try again in a minute."
             jobs[jid] = {"status": "error", "message": error_msg}
 
-    thread = threading.Thread(target=_generate, args=(job_id, name, description, folder_path), daemon=True)
+    thread = threading.Thread(target=_generate, args=(job_id, name, folder_context), daemon=True)
     thread.start()
     return jsonify({"job_id": job_id, "status": "started"})
 
@@ -1311,8 +1356,8 @@ def _run_generation(config_path: str, count: int, job_id: str):
         base_dir = OUTPUT_DIR / app_slug / today
         videos_dir = base_dir / "videos"
 
-        voice_engine = os.environ.get("VOICE_ENGINE", "elevenlabs")
-        image_engine = os.environ.get("IMAGE_ENGINE", "flux_schnell")
+        voice_engine = app_config.get("voice_engine", os.environ.get("VOICE_ENGINE", "elevenlabs"))
+        image_engine = app_config.get("image_engine", os.environ.get("IMAGE_ENGINE", "flux_schnell"))
 
         stages = jobs[job_id]["pipeline_stages"]
 
