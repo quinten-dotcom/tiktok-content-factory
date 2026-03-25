@@ -461,22 +461,38 @@ async function addApp() {
   if (!name || !desc) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">Fill in both fields</span>'; return; }
   const btn = document.getElementById('add-btn');
   btn.disabled = true; btn.textContent = 'Generating...';
-  document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> AI is creating strategy, personas, hashtags... ~20 seconds</span>';
+  document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> AI is creating strategy, personas, hashtags...</span>';
   setStatus('Generating strategy...');
   try {
     const res = await fetch('/api/apps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, description:desc}) });
     const data = await res.json();
-    if (data.error) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; }
-    else {
-      document.getElementById('inp-name').value = '';
-      document.getElementById('inp-desc').value = '';
-      document.getElementById('add-status').innerHTML = '<span style="color:var(--green)">App created! Strategy generated.</span>';
-      setTimeout(() => document.getElementById('add-status').innerHTML = '', 3000);
-      loadApps();
-    }
-  } catch(e) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+e.message+'</span>'; }
-  btn.disabled = false; btn.textContent = 'Generate';
-  setStatus('Ready');
+    if (data.error) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready'); return; }
+    // Poll for completion
+    const jobId = data.job_id;
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('/api/config-status/' + jobId);
+        const j = await r.json();
+        if (j.status === 'running') {
+          document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> ' + (j.message || 'Working...') + '</span>';
+        } else if (j.status === 'done') {
+          clearInterval(poll);
+          document.getElementById('inp-name').value = '';
+          document.getElementById('inp-desc').value = '';
+          document.getElementById('add-status').innerHTML = '<span style="color:var(--green)">App created! Strategy generated.</span>';
+          setTimeout(() => document.getElementById('add-status').innerHTML = '', 3000);
+          loadApps();
+          btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready');
+        } else if (j.status === 'error') {
+          clearInterval(poll);
+          document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">' + j.message + '</span>';
+          btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready');
+        }
+      } catch(e) {
+        document.getElementById('add-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Still working...</span>';
+      }
+    }, 2000);
+  } catch(e) { document.getElementById('add-status').innerHTML = '<span style="color:var(--red)">'+e.message+'</span>'; btn.disabled = false; btn.textContent = 'Generate'; setStatus('Ready'); }
 }
 
 // ─── Detail page ───
@@ -737,18 +753,44 @@ def list_apps():
 
 @app.route("/api/apps", methods=["POST"])
 def create_app():
+    """Start async config generation — returns a job_id to poll."""
     data = request.json
     name = data.get("name", "").strip()
     description = data.get("description", "").strip()
     if not name or not description:
         return jsonify({"error": "Name and description are required"}), 400
-    try:
-        from config_generator import generate_app_config, save_app_config
-        config = generate_app_config(name, description)
-        path = save_app_config(config, str(CONFIG_DIR))
-        return jsonify({"status": "created", "config_path": path, "config": config})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    job_id = f"config_{name.lower().replace(' ','_')}_{int(time.time())}"
+    jobs[job_id] = {"status": "running", "message": "Generating strategy with AI..."}
+
+    def _generate(jid, app_name, app_desc):
+        try:
+            from config_generator import generate_app_config, save_app_config
+            jobs[jid]["message"] = "Creating personas, hashtags, content strategy..."
+            config = generate_app_config(app_name, app_desc)
+            path = save_app_config(config, str(CONFIG_DIR))
+            jobs[jid] = {"status": "done", "message": "App created!", "config": config, "config_path": path}
+        except Exception as e:
+            error_msg = str(e)
+            # Give user-friendly messages for common errors
+            if "credit balance" in error_msg.lower() or "billing" in error_msg.lower():
+                error_msg = "Anthropic API has no credits. Add credits at console.anthropic.com"
+            elif "authentication" in error_msg.lower() or "api key" in error_msg.lower():
+                error_msg = "Anthropic API key is invalid or missing. Check Settings."
+            elif "overloaded" in error_msg.lower():
+                error_msg = "Anthropic API is overloaded. Try again in a minute."
+            jobs[jid] = {"status": "error", "message": error_msg}
+
+    thread = threading.Thread(target=_generate, args=(job_id, name, description), daemon=True)
+    thread.start()
+    return jsonify({"job_id": job_id, "status": "started"})
+
+
+@app.route("/api/config-status/<job_id>", methods=["GET"])
+def config_status(job_id):
+    """Poll config generation progress."""
+    if job_id not in jobs:
+        return jsonify({"status": "not_found"}), 404
+    return jsonify(jobs[job_id])
 
 
 @app.route("/api/apps/<slug>", methods=["DELETE"])
