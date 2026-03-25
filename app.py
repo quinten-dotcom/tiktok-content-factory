@@ -433,9 +433,13 @@ DASHBOARD_HTML = r"""
 
     <div class="settings-section">
       <h2>Updates</h2>
-      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Pull the latest code from GitHub and restart the app.</p>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-primary" onclick="triggerDeploy()">Update to Latest Version</button>
+      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Upload a code update or pull from GitHub.</p>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label class="btn btn-primary" style="cursor:pointer; margin:0;">
+          Upload Update (.zip)
+          <input type="file" accept=".zip" style="display:none;" onchange="deployUpload(event)">
+        </label>
+        <button class="btn btn-secondary" onclick="triggerDeploy()">Pull from GitHub</button>
         <span id="deploy-status" style="font-size:13px;"></span>
       </div>
     </div>
@@ -887,6 +891,25 @@ async function saveKeys() {
 }
 
 // ─── Deploy ───
+async function deployUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Uploading and deploying...</span>';
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/deploy-upload', { method:'POST', body: formData });
+    const data = await res.json();
+    if (data.status === 'error') {
+      document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+data.message+'</span>';
+    } else {
+      document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">'+data.message+' Refreshing...</span>';
+      setTimeout(() => location.reload(), 5000);
+    }
+  } catch(e) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Restarting... refresh in a few seconds.</span>'; setTimeout(() => location.reload(), 5000); }
+  event.target.value = '';
+}
+
 async function triggerDeploy() {
   document.getElementById('deploy-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Pulling latest code...</span>';
   try {
