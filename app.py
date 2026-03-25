@@ -405,17 +405,9 @@ DASHBOARD_HTML = r"""
     </div>
 
     <div class="settings-section">
-      <h2>Deploy</h2>
-      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Update the live app when new code is pushed to GitHub. Get your deploy hook URL from Railway: your project &rarr; Settings &rarr; Deploy &rarr; Deploy Hook &rarr; copy the URL.</p>
-      <div class="setting-row">
-        <div style="flex:1;"><div class="setting-label">Railway Deploy Hook</div><div class="setting-desc">Paste the webhook URL from Railway settings</div></div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span id="hook-status" style="font-size:12px; color:var(--text-tertiary);">Not set</span>
-          <input class="form-input" id="inp-deploy-hook" placeholder="https://backboard.railway.app/..." style="width:320px; font-size:12px; padding:8px 12px;">
-        </div>
-      </div>
-      <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
-        <button class="btn btn-secondary" onclick="saveDeployHook()">Save Hook URL</button>
+      <h2>Updates</h2>
+      <p style="font-size:13px; color:var(--text-tertiary); margin-bottom:16px;">Pull the latest code from GitHub and restart the app.</p>
+      <div style="display:flex; gap:10px; align-items:center;">
         <button class="btn btn-primary" onclick="triggerDeploy()">Update to Latest Version</button>
         <span id="deploy-status" style="font-size:13px;"></span>
       </div>
@@ -678,26 +670,21 @@ async function saveKeys() {
   }
 }
 
-// ─── Deploy hook ───
-async function saveDeployHook() {
-  const url = document.getElementById('inp-deploy-hook').value.trim();
-  if (!url) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">Paste a URL first</span>'; return; }
-  const res = await fetch('/api/settings/deploy-hook', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url}) });
-  const data = await res.json();
-  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Hook saved!</span>';
-  document.getElementById('inp-deploy-hook').value = '';
-  document.getElementById('hook-status').textContent = 'Configured';
-  document.getElementById('hook-status').style.color = 'var(--green)';
-}
-
+// ─── Deploy ───
 async function triggerDeploy() {
-  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Deploying...</span>';
+  document.getElementById('deploy-status').innerHTML = '<span style="color:var(--text-secondary)"><span class="spinner"></span> Pulling latest code...</span>';
   try {
     const res = await fetch('/api/deploy', { method:'POST' });
     const data = await res.json();
-    if (data.error) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+data.error+'</span>'; }
-    else { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Deploy triggered! App will update in ~1-2 minutes. Refresh the page after.</span>'; }
-  } catch(e) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+e.message+'</span>'; }
+    if (data.status === 'error') {
+      document.getElementById('deploy-status').innerHTML = '<span style="color:var(--red)">'+data.message+'</span>';
+    } else if (data.message.includes('Already')) {
+      document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Already on latest version.</span>';
+    } else {
+      document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Updated! Restarting... refresh in 5 seconds.</span>';
+      setTimeout(() => location.reload(), 5000);
+    }
+  } catch(e) { document.getElementById('deploy-status').innerHTML = '<span style="color:var(--green)">Restarting... refresh in a few seconds.</span>'; setTimeout(() => location.reload(), 5000); }
 }
 
 // ─── Status ───
@@ -881,46 +868,36 @@ def save_keys():
     return jsonify({"status": "saved", "updated": updated})
 
 
-@app.route("/api/settings/deploy-hook", methods=["POST"])
-def save_deploy_hook():
-    """Save the Railway deploy hook URL."""
-    data = request.json or {}
-    hook_url = data.get("url", "").strip()
-    if not hook_url:
-        return jsonify({"error": "No URL provided"}), 400
-
-    env_path = BASE_DIR / ".env"
-    existing = {}
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if "=" in line and not line.startswith("#"):
-                    k, v = line.split("=", 1)
-                    existing[k.strip()] = v.strip()
-
-    existing["RAILWAY_DEPLOY_HOOK"] = hook_url
-    os.environ["RAILWAY_DEPLOY_HOOK"] = hook_url
-
-    with open(env_path, "w") as f:
-        for k, v in existing.items():
-            f.write(f"{k}={v}\n")
-
-    return jsonify({"status": "saved"})
-
-
 @app.route("/api/deploy", methods=["POST"])
 def trigger_deploy():
-    """Trigger a Railway redeploy via the deploy hook."""
-    import requests as req
-    hook_url = os.environ.get("RAILWAY_DEPLOY_HOOK", "")
-    if not hook_url:
-        return jsonify({"error": "No deploy hook URL configured. Add it in Settings."}), 400
+    """Pull latest code from GitHub and restart the app."""
+    import subprocess
     try:
-        resp = req.post(hook_url, timeout=10)
-        return jsonify({"status": "triggered", "code": resp.status_code})
+        # Pull latest from GitHub
+        result = subprocess.run(
+            ["git", "pull", "origin", "master"],
+            cwd=str(BASE_DIR),
+            capture_output=True, text=True, timeout=30,
+        )
+        output = result.stdout + result.stderr
+
+        if result.returncode != 0:
+            return jsonify({"status": "error", "message": output})
+
+        if "Already up to date" in output:
+            return jsonify({"status": "ok", "message": "Already on latest version."})
+
+        # Restart by exiting — Railway/Procfile will auto-restart the process
+        def delayed_restart():
+            import time
+            time.sleep(2)
+            os._exit(0)
+
+        threading.Thread(target=delayed_restart, daemon=True).start()
+        return jsonify({"status": "ok", "message": "Updated! App restarting in 2 seconds. Refresh the page."})
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"status": "error", "message": str(e)})
 
 
 def _run_generation(config_path: str, count: int, job_id: str):
