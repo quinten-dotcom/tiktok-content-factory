@@ -51,17 +51,22 @@ def generate_image_schnell(
         },
     )
 
-    # fal.ai returns a queue response — poll for result
+    # fal.ai returns either an immediate result or a queue response
     result = response.json()
-    if response.status_code == 200 and "images" in result:
+
+    # Check for error responses (e.g., locked account, exhausted balance)
+    if "detail" in result:
+        detail = result["detail"]
+        if isinstance(detail, str) and "locked" in detail.lower():
+            raise Exception("fal.ai account is locked — add credits at fal.ai/dashboard/billing")
+        raise Exception(f"fal.ai error: {detail}")
+
+    if "images" in result:
         image_url = result["images"][0]["url"]
+    elif "request_id" in result:
+        image_url = _poll_fal_result(result["request_id"], key, model_path="fal-ai/flux/schnell")
     else:
-        # Queue-based: get request_id and poll
-        request_id = result.get("request_id")
-        if request_id:
-            image_url = _poll_fal_result(request_id, key, model_path="fal-ai/flux/schnell")
-        else:
-            raise Exception(f"fal.ai error: {response.status_code} — {response.text}")
+        raise Exception(f"fal.ai error: {response.status_code} — {json.dumps(result)[:200]}")
 
     # Download and save
     img_response = requests.get(image_url)
@@ -147,9 +152,12 @@ def _poll_fal_result(request_id: str, api_key: str, max_wait: int = 120, model_p
                 f"https://queue.fal.run/{model_path}/requests/{request_id}",
                 headers={"Authorization": f"Key {api_key}"},
             )
-            return result_resp.json()["images"][0]["url"]
+            result_data = result_resp.json()
+            if "images" not in result_data:
+                raise Exception(f"fal.ai completed but no images returned: {json.dumps(result_data)[:200]}")
+            return result_data["images"][0]["url"]
         elif status.get("status") == "FAILED":
-            raise Exception(f"fal.ai request {request_id} failed: {status}")
+            raise Exception(f"fal.ai image generation failed: {status.get('error', 'Unknown error')}")
         time.sleep(2)
     raise TimeoutError(f"fal.ai request {request_id} timed out after {max_wait}s")
 
