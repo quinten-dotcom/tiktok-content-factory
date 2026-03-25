@@ -38,6 +38,15 @@ Return ONLY valid JSON matching this exact structure:
   "play_store_url": "",
   "link_in_bio_url": "",
 
+  "ica": {{
+    "target_audience": "Specific demographic: age range, occupation/lifestyle, key characteristics",
+    "pain_points": "3-4 specific pain points these users have that the app addresses",
+    "desired_outcome": "What they want to achieve — be specific and emotional",
+    "tone": "How the brand should speak to them — with example phrases",
+    "hook_style": "What type of hooks grab this audience (curiosity gaps, bold claims, etc.)",
+    "platforms": "Where this audience hangs out online besides TikTok"
+  }},
+
   "content_pillars": [
     "5 specific content topics that would perform well on TikTok for this app",
     "be specific and creative, not generic",
