@@ -1087,43 +1087,59 @@ def save_keys():
 
 @app.route("/api/deploy", methods=["POST"])
 def trigger_deploy():
-    """Pull latest code from GitHub and restart the app."""
-    import subprocess
-    repo_url = "https://github.com/quinten-dotcom/tiktok-content-factory.git"
-    try:
-        # Check if git is available
-        git_check = subprocess.run(["which", "git"], capture_output=True, text=True)
-        if git_check.returncode != 0:
-            return jsonify({"status": "error", "message": "Git not available. Redeploy from Railway dashboard to pick up the fix."})
+    """Download latest code from GitHub (as zip) and restart. No git required."""
+    import urllib.request
+    import zipfile
+    import io
+    import shutil
 
-        git_dir = BASE_DIR / ".git"
-        if not git_dir.exists():
-            # No .git directory (happens with `railway up`) — initialize and fetch
-            subprocess.run(["git", "init"], cwd=str(BASE_DIR), capture_output=True, text=True)
-            subprocess.run(["git", "remote", "add", "origin", repo_url], cwd=str(BASE_DIR), capture_output=True, text=True)
-            result = subprocess.run(
-                ["git", "fetch", "origin", "master"],
-                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=60,
-            )
-            if result.returncode != 0:
-                return jsonify({"status": "error", "message": "Failed to fetch: " + result.stderr})
-            result = subprocess.run(
-                ["git", "reset", "--hard", "origin/master"],
-                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                return jsonify({"status": "error", "message": "Failed to reset: " + result.stderr})
-        else:
-            # Normal git pull
-            result = subprocess.run(
-                ["git", "pull", "origin", "master"],
-                cwd=str(BASE_DIR), capture_output=True, text=True, timeout=60,
-            )
-            output = result.stdout + result.stderr
-            if result.returncode != 0:
-                return jsonify({"status": "error", "message": output})
-            if "Already up to date" in output:
-                return jsonify({"status": "ok", "message": "Already on latest version."})
+    zip_url = "https://github.com/quinten-dotcom/tiktok-content-factory/archive/refs/heads/master.zip"
+    # Directories to preserve (user data, configs, generated content)
+    PRESERVE = {".env", "config", "output", "_update_temp", "__pycache__", ".git", "nixpacks.toml"}
+
+    try:
+        # Download the repo as a zip
+        response = urllib.request.urlopen(zip_url, timeout=60)
+        zip_data = response.read()
+
+        # Extract to temp directory
+        temp_dir = BASE_DIR / "_update_temp"
+        if temp_dir.exists():
+            shutil.rmtree(str(temp_dir))
+
+        with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+            zf.extractall(str(temp_dir))
+
+        # Find the extracted top-level directory (e.g. "tiktok-content-factory-master/")
+        extracted_dirs = [d for d in temp_dir.iterdir() if d.is_dir()]
+        if not extracted_dirs:
+            shutil.rmtree(str(temp_dir))
+            return jsonify({"status": "error", "message": "Downloaded zip was empty."})
+
+        extracted = extracted_dirs[0]
+
+        # Copy files over, preserving user data
+        updated_files = []
+        for item in extracted.iterdir():
+            if item.name in PRESERVE:
+                continue
+            dest = BASE_DIR / item.name
+            try:
+                if item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(str(dest))
+                    shutil.copytree(str(item), str(dest))
+                else:
+                    shutil.copy2(str(item), str(dest))
+                updated_files.append(item.name)
+            except Exception as e:
+                print(f"Warning: Could not update {item.name}: {e}")
+
+        # Cleanup temp
+        shutil.rmtree(str(temp_dir))
+
+        if not updated_files:
+            return jsonify({"status": "ok", "message": "Already on latest version."})
 
         # Restart by exiting — Railway will auto-restart the process
         def delayed_restart():
@@ -1131,9 +1147,14 @@ def trigger_deploy():
             os._exit(0)
 
         threading.Thread(target=delayed_restart, daemon=True).start()
-        return jsonify({"status": "ok", "message": "Updated! App restarting in 2 seconds. Refresh the page."})
+        return jsonify({"status": "ok", "message": f"Updated {len(updated_files)} files! Restarting in 2 seconds."})
 
     except Exception as e:
+        # Cleanup on error
+        temp_dir = BASE_DIR / "_update_temp"
+        if temp_dir.exists():
+            import shutil
+            shutil.rmtree(str(temp_dir))
         return jsonify({"status": "error", "message": str(e)})
 
 
