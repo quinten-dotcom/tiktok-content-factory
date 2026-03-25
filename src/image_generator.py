@@ -145,14 +145,30 @@ def _poll_fal_result(request_id: str, api_key: str, max_wait: int = 120, model_p
             f"https://queue.fal.run/{model_path}/requests/{request_id}/status",
             headers={"Authorization": f"Key {api_key}"},
         )
-        status = resp.json()
+        # Handle non-JSON responses from fal.ai (rate limits, server errors, etc.)
+        try:
+            status = resp.json()
+        except Exception:
+            print(f"fal.ai returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}", flush=True)
+            if resp.status_code == 401:
+                raise Exception("fal.ai API key is invalid or expired. Check FAL_KEY in .env")
+            if resp.status_code == 429:
+                print("fal.ai rate limited, waiting 10s...", flush=True)
+                time.sleep(10)
+                continue
+            time.sleep(3)
+            continue
+
         if status.get("status") == "COMPLETED":
             # Fetch result
             result_resp = requests.get(
                 f"https://queue.fal.run/{model_path}/requests/{request_id}",
                 headers={"Authorization": f"Key {api_key}"},
             )
-            result_data = result_resp.json()
+            try:
+                result_data = result_resp.json()
+            except Exception:
+                raise Exception(f"fal.ai result response not JSON (HTTP {result_resp.status_code}): {result_resp.text[:200]}")
             if "images" not in result_data:
                 raise Exception(f"fal.ai completed but no images returned: {json.dumps(result_data)[:200]}")
             return result_data["images"][0]["url"]
