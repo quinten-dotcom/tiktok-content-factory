@@ -27,10 +27,19 @@ app = Flask(__name__)
 
 # ─── DIRECTORIES ─────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-CONFIG_DIR = BASE_DIR / "config"
-OUTPUT_DIR = BASE_DIR / "output"
+# Use Railway Volume for persistent data if available, else fall back to local
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
+DATA_DIR.mkdir(exist_ok=True)
+CONFIG_DIR = DATA_DIR / "config"
+OUTPUT_DIR = DATA_DIR / "output"
 CONFIG_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+# Also persist .env in data dir so API keys survive deploys
+PERSISTENT_ENV = DATA_DIR / ".env"
+if PERSISTENT_ENV.exists() and not (BASE_DIR / ".env").exists():
+    import shutil
+    shutil.copy2(str(PERSISTENT_ENV), str(BASE_DIR / ".env"))
+    load_dotenv(override=True)
 
 # ─── STATE ───────────────────────────────────────────────────────────────────
 jobs = {}
@@ -528,9 +537,10 @@ function renderDetail(c) {
   const personas = c.personas || [];
   const pillars = c.content_pillars || [];
   const hashtags = (c.hashtag_sets || {});
-  const primary_tags = hashtags.primary || [];
+  const broad_tags = hashtags.broad || [];
+  const medium_tags = hashtags.medium || [];
   const niche_tags = hashtags.niche || [];
-  const all_tags = [...primary_tags, ...niche_tags].slice(0, 8);
+  const all_tags = [...broad_tags, ...medium_tags, ...niche_tags].slice(0, 10);
   const styles = c.video_styles || {};
 
   document.getElementById('detail-container').innerHTML = `
@@ -547,17 +557,69 @@ function renderDetail(c) {
     </div>
 
     <div class="section-title">TikTok Account</div>
-    <div class="connect-card card">
-      <div class="connect-info">
-        <h3>${c.tiktok_handle || 'No account connected'}</h3>
-        <p>${c.tiktok_handle ? 'Connect via TikTok API or browser cookies to enable auto-posting' : 'Add a TikTok handle in the config to connect'}</p>
+    <div class="card" style="margin-bottom:24px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">TikTok Handle</label>
+          <input class="form-input" id="cfg-tiktok-handle" value="${c.tiktok_handle||''}" placeholder="@yourhandle" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Upload-Post Account ID</label>
+          <input class="form-input" id="cfg-tiktok-account-id" value="${c.tiktok_account_id||''}" placeholder="From upload-post.com dashboard" style="width:100%;">
+        </div>
       </div>
-      <span class="connect-badge ${c.tiktok_handle ? 'on' : 'off'}">${c.tiktok_handle ? 'Ready' : 'Not Connected'}</span>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">App Store URL</label>
+          <input class="form-input" id="cfg-app-store" value="${c.app_store_url||''}" placeholder="https://apps.apple.com/..." style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Play Store URL</label>
+          <input class="form-input" id="cfg-play-store" value="${c.play_store_url||''}" placeholder="https://play.google.com/..." style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Link in Bio URL</label>
+          <input class="form-input" id="cfg-link-bio" value="${c.link_in_bio_url||''}" placeholder="https://linktr.ee/..." style="width:100%;">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveAppConfig('${c.slug}')" style="font-size:13px;">Save Account Info</button>
+      <span id="cfg-save-status" style="font-size:12px; margin-left:10px;"></span>
+    </div>
+
+    <div class="section-title">Pipeline Settings</div>
+    <div class="card" style="margin-bottom:24px;">
+      <p style="font-size:12px; color:var(--text-tertiary); margin-bottom:16px;">These control how videos are generated for this app.</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Videos Per Batch</label>
+          <input class="form-input" id="cfg-vpd" type="number" value="${c.videos_per_day||7}" min="1" max="20" style="width:100%;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Image Engine</label>
+          <select class="form-input" id="cfg-img-engine" style="width:100%; background:var(--surface); color:var(--text-primary); border:1px solid var(--border); border-radius:8px; padding:8px;">
+            <option value="flux_schnell" ${(c.image_engine||'flux_schnell')==='flux_schnell'?'selected':''}>Flux Schnell (fast, $0.003)</option>
+            <option value="flux_kontext" ${(c.image_engine)==='flux_kontext'?'selected':''}>Flux Kontext (consistent, $0.04)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">Voice Engine</label>
+          <select class="form-input" id="cfg-voice-engine" style="width:100%; background:var(--surface); color:var(--text-primary); border:1px solid var(--border); border-radius:8px; padding:8px;">
+            <option value="elevenlabs" ${(c.voice_engine||'elevenlabs')==='elevenlabs'?'selected':''}>ElevenLabs (best quality)</option>
+            <option value="kokoro" ${(c.voice_engine)==='kokoro'?'selected':''}>Kokoro (free, local)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px; color:var(--text-tertiary); display:block; margin-bottom:4px;">QA Threshold (1-10)</label>
+          <input class="form-input" id="cfg-qa" type="number" value="${c.qa_threshold||7}" min="1" max="10" step="0.5" style="width:100%;">
+        </div>
+      </div>
+      <button class="btn btn-secondary" onclick="savePipelineSettings('${c.slug}')" style="font-size:13px;">Save Pipeline Settings</button>
+      <span id="pipeline-save-status" style="font-size:12px; margin-left:10px;"></span>
     </div>
 
     <div class="section-title">Ideal Customer Avatar</div>
     <div class="card" style="margin-bottom:32px;">
-      <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">Auto-generated from your app description. This is who every video is made for.</p>
+      <p style="font-size:12px; color:var(--text-tertiary); margin-bottom:16px;">Auto-generated from your app description. This is who every video is made for.</p>
       <div class="ica-grid">
         <div class="ica-item"><div class="ica-label">Target Audience</div><div class="ica-value">${ica.target_audience || c.niche + ' users ages 18-30'}</div></div>
         <div class="ica-item"><div class="ica-label">Pain Points</div><div class="ica-value">${ica.pain_points || 'Generated from app context'}</div></div>
@@ -580,20 +642,51 @@ function renderDetail(c) {
         <div class="persona-card card">
           <div class="persona-name">${p.name}</div>
           <div class="persona-arch">${p.archetype || ''}</div>
-          <div class="persona-desc">${p.appearance || ''}</div>
-          <div class="persona-desc" style="margin-top:4px;">${p.writing_style || ''}</div>
+          <div class="persona-desc">${p.description || ''}</div>
         </div>
       `).join('')}
     </div>
   `;
 }
 
+async function saveAppConfig(slug) {
+  const data = {
+    tiktok_handle: document.getElementById('cfg-tiktok-handle').value.trim(),
+    tiktok_account_id: document.getElementById('cfg-tiktok-account-id').value.trim(),
+    app_store_url: document.getElementById('cfg-app-store').value.trim(),
+    play_store_url: document.getElementById('cfg-play-store').value.trim(),
+    link_in_bio_url: document.getElementById('cfg-link-bio').value.trim(),
+  };
+  try {
+    const res = await fetch('/api/apps/' + slug + '/config', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const result = await res.json();
+    document.getElementById('cfg-save-status').innerHTML = '<span style="color:var(--green)">Saved!</span>';
+    setTimeout(() => document.getElementById('cfg-save-status').innerHTML = '', 2000);
+  } catch(e) { document.getElementById('cfg-save-status').innerHTML = '<span style="color:var(--red)">Error</span>'; }
+}
+
+async function savePipelineSettings(slug) {
+  const data = {
+    videos_per_day: document.getElementById('cfg-vpd').value,
+    image_engine: document.getElementById('cfg-img-engine').value,
+    voice_engine: document.getElementById('cfg-voice-engine').value,
+    qa_threshold: document.getElementById('cfg-qa').value,
+  };
+  try {
+    const res = await fetch('/api/apps/' + slug + '/config', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data) });
+    const result = await res.json();
+    document.getElementById('pipeline-save-status').innerHTML = '<span style="color:var(--green)">Saved!</span>';
+    setTimeout(() => document.getElementById('pipeline-save-status').innerHTML = '', 2000);
+  } catch(e) { document.getElementById('pipeline-save-status').innerHTML = '<span style="color:var(--red)">Error</span>'; }
+}
+
 // ─── Generate ───
 async function generateForApp(slug) {
   setStatus('Generating videos...');
   try {
-    const res = await fetch('/api/generate/' + slug, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count:7}) });
+    const res = await fetch('/api/generate/' + slug, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
     const data = await res.json();
+    if (data.error) { setStatus('Error: ' + data.error); return; }
     if (data.job_id) { pollJob(slug, data.job_id); showPage('pipeline'); }
   } catch(e) { setStatus('Error: ' + e.message); }
 }
@@ -876,13 +969,51 @@ def get_app_config(slug):
     return jsonify(config)
 
 
+@app.route("/api/apps/<slug>/config", methods=["PUT"])
+def update_app_config(slug):
+    """Update specific fields in an app's config."""
+    config_path = CONFIG_DIR / f"{slug}.json"
+    if not config_path.exists():
+        return jsonify({"error": "App not found"}), 404
+    with open(config_path) as f:
+        config = json.load(f)
+
+    data = request.json or {}
+
+    # Editable fields
+    editable = [
+        "tiktok_handle", "tiktok_account_id", "videos_per_day",
+        "image_engine", "voice_engine", "qa_threshold",
+        "app_store_url", "play_store_url", "link_in_bio_url",
+    ]
+    updated = []
+    for field in editable:
+        if field in data:
+            val = data[field]
+            # Type coercions
+            if field == "videos_per_day":
+                val = int(val) if val else 7
+            elif field == "qa_threshold":
+                val = float(val) if val else 7.0
+            config[field] = val
+            updated.append(field)
+
+    with open(config_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    return jsonify({"status": "saved", "updated": updated})
+
+
 @app.route("/api/generate/<slug>", methods=["POST"])
 def start_generation(slug):
     config_path = CONFIG_DIR / f"{slug}.json"
     if not config_path.exists():
         return jsonify({"error": "App not found"}), 404
+    # Use per-app videos_per_day if set, else request body, else default 7
+    with open(config_path) as f:
+        app_cfg = json.load(f)
     data = request.json or {}
-    count = data.get("count", 7)
+    count = data.get("count", app_cfg.get("videos_per_day", 7))
     job_id = f"{slug}_{int(time.time())}"
     jobs[job_id] = {
         "status": "running",
@@ -1077,10 +1208,11 @@ def save_keys():
             os.environ[env_var] = val
             updated.append(field)
 
-    # Write .env back
-    with open(env_path, "w") as f:
-        for k, v in existing.items():
-            f.write(f"{k}={v}\n")
+    # Write .env back (to both locations for persistence)
+    for path in [env_path, PERSISTENT_ENV]:
+        with open(path, "w") as f:
+            for k, v in existing.items():
+                f.write(f"{k}={v}\n")
 
     return jsonify({"status": "saved", "updated": updated})
 
