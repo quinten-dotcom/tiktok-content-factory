@@ -1,0 +1,145 @@
+{
+  "app_name": "TestApp",
+  "app_description": "Testing this out",
+  "tiktok_handle": "not made yet",
+  "niche": "Productivity",
+  "app_store_url": "https://apps.apple.com/app/focustimer-pro/id123456789",
+  "play_store_url": "https://play.google.com/store/apps/details?id=com.focustimer.pro",
+  "link_in_bio_url": "https://linktr.ee/focustimerpro",
+  "content_pillars": [
+    "You decide",
+    "You decide",
+    "You  decide",
+    "You decide",
+    "You decide",
+    "a",
+    "a",
+    "a",
+    "a",
+    "a",
+    "a",
+    "a",
+    "a",
+    "a"
+  ],
+  "video_styles": {
+    "story_narration": 0.3,
+    "text_heavy_educational": 0.25,
+    "split_screen_comparison": 0.15,
+    "trending_sound_text_only": 0.15,
+    "app_demo_screenrecord": 0.15
+  },
+  "personas": [
+    {
+      "id": "sophia",
+      "name": "Sophia",
+      "archetype": "The Encouraging Expert",
+      "description": "24-year-old woman with shoulder-length brown hair, warm brown eyes, friendly smile. Often wears casual but put-together outfits \u2014 white tees, cozy sweaters, simple jewelry.",
+      "image_prompt_prefix": "Portrait photo of a 24-year-old woman with shoulder-length brown hair, warm brown eyes, friendly smile, natural skin texture",
+      "voice_config": {
+        "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "kokoro_voice": "af_sarah",
+        "speaking_speed": 1.1
+      },
+      "writing_style": {
+        "tone": "encouraging, warm, relatable",
+        "energy": "medium-high",
+        "vocabulary": "casual gen-z, uses 'literally', 'game changer', 'trust me on this'",
+        "humor": "light self-deprecating",
+        "avoid": [
+          "corporate speak",
+          "condescending tone",
+          "excessive emojis in speech"
+        ]
+      }
+    },
+    {
+      "id": "marcus",
+      "name": "Marcus",
+      "archetype": "The Motivated Hustler",
+      "description": "27-year-old man with short dark hair, clean-shaven, athletic build. Wears simple dark t-shirts, hoodies. Confident but approachable.",
+      "image_prompt_prefix": "Portrait photo of a 27-year-old man with short dark hair, clean-shaven, athletic build, confident expression, natural skin",
+      "voice_config": {
+        "elevenlabs_voice_id": "29vD33N1CtxCmqQRPOHJ",
+        "kokoro_voice": "am_michael",
+        "speaking_speed": 1.15
+      },
+      "writing_style": {
+        "tone": "direct, motivational, no-BS",
+        "energy": "high",
+        "vocabulary": "casual but punchy, uses 'bro', 'let me put you on', 'this is it'",
+        "humor": "dry, confident",
+        "avoid": [
+          "whiny tone",
+          "too many filler words",
+          "salesy pitch"
+        ]
+      }
+    },
+    {
+      "id": "emma",
+      "name": "Emma",
+      "archetype": "The Calm Storyteller",
+      "description": "22-year-old woman with long dark hair, glasses, studious look. Wears oversized sweaters, sits in cozy spaces. Bookish aesthetic.",
+      "image_prompt_prefix": "Portrait photo of a 22-year-old woman with long dark hair, round glasses, gentle expression, bookish aesthetic, natural skin",
+      "voice_config": {
+        "elevenlabs_voice_id": "EXAVITQu4vr4xnSDxMaL",
+        "kokoro_voice": "af_bella",
+        "speaking_speed": 1.0
+      },
+      "writing_style": {
+        "tone": "thoughtful, warm, introspective",
+        "energy": "medium-low, ASMR-adjacent calm",
+        "vocabulary": "articulate but accessible, uses 'honestly', 'here's the thing', 'I wish I knew this sooner'",
+        "humor": "gentle, observational",
+        "avoid": [
+          "aggressive energy",
+          "clickbait tone",
+          "rushing"
+        ]
+      }
+    }
+  ],
+  "cta_variations": [
+    "Link in bio if you want to try it",
+    "I put the link in my bio",
+    "Go grab it \u2014 link in bio",
+    "Seriously, link in bio. Thank me later."
+  ],
+  "hashtag_sets": {
+    "broad": [
+      "#productivity",
+      "#focusmode",
+      "#studytok"
+    ],
+    "medium": [
+      "#studytips",
+      "#deepwork",
+      "#timemanagement",
+      "#pomodorotechnique"
+    ],
+    "niche": [
+      "#focustimer",
+      "#studywithme",
+      "#productivityhacks"
+    ]
+  },
+  "color_grade": {
+    "warmth": 1.08,
+    "contrast": 1.05,
+    "saturation": 0.95,
+    "vignette_strength": 0.15
+  },
+  "text_style": {
+    "font": "Montserrat-Black",
+    "hook_font_size": 72,
+    "body_font_size": 56,
+    "subtitle_font_size": 44,
+    "text_color": "#FFFFFF",
+    "text_stroke_color": "#000000",
+    "text_stroke_width": 3,
+    "highlight_color": "#FFD700",
+    "subtitle_bg_color": "rgba(0,0,0,0.6)",
+    "subtitle_bg_radius": 12
+  }
+}
