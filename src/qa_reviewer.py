@@ -14,6 +14,9 @@ import json
 import base64
 import anthropic
 from pathlib import Path
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def _strip_markdown_json(text: str) -> str:
@@ -63,6 +66,7 @@ def review_video(
     api_key: str | None = None,
     model: str = "claude-haiku-4-5-20251001",
     threshold: float = 7.0,
+    post_type: str | None = None,
 ) -> dict:
     """
     Review a video's key frames using Claude Vision.
@@ -96,6 +100,8 @@ SCRIPT CONTEXT:
 - Hook: {script.get('hook_text', 'N/A')}
 - Style: {script.get('video_style', 'N/A')}
 - Persona: {script.get('persona_id', 'N/A')}
+- Correct price: {app_config.get('pricing', {}).get('price', 'N/A')}
+- Free trial: {app_config.get('pricing', {}).get('free_trial', 'N/A')}
 
 Rate EACH frame and the overall video on these criteria (1-10):
 
@@ -103,7 +109,8 @@ Rate EACH frame and the overall video on these criteria (1-10):
 2. TEXT READABILITY: Is the text overlay clear and readable at mobile size?
 3. SCROLL-STOP POWER (frame 1 only): Would this first frame make someone stop scrolling?
 4. BRAND CONSISTENCY: Do the frames look like they belong to the same video?
-5. OVERALL QUALITY: Overall production quality.
+5. PRICING ACCURACY: If any text shows a price, does it match the correct price above? Flag any wrong prices as a critical issue.
+6. OVERALL QUALITY: Overall production quality.
 
 Respond in JSON:
 {{
@@ -142,22 +149,53 @@ Be honest and critical. A score below 7 means the video should be regenerated.""
     response_text = response.content[0].text.strip()
 
     # Parse JSON response — robustly strip markdown
-    response_text = _strip_markdown_json(response_text)
+    cleaned_text = _strip_markdown_json(response_text)
 
+    review = None
     try:
-        review = json.loads(response_text)
+        review = json.loads(cleaned_text)
     except json.JSONDecodeError:
-        # If Claude doesn't return valid JSON, create a default pass
-        review = {
-            "overall_score": 7.0,
-            "pass": True,
-            "issues": ["Could not parse QA response"],
-            "suggestions": [],
-            "raw_response": response_text,
-        }
+        pass
 
-    # Apply threshold
-    score = review.get("overall_score", 0)
+    # Retry: If first parse failed, try asking Claude for just the score
+    if review is None:
+        logger.warning("JSON parse failed, retrying with simpler prompt...")
+        try:
+            retry_response = client.messages.create(
+                model=model,
+                max_tokens=256,
+                messages=[
+                    {"role": "user", "content": content},
+                    {"role": "assistant", "content": response_text},
+                    {"role": "user", "content": 'Your response was not valid JSON. Please respond with ONLY a JSON object like: {"overall_score": 7.5, "pass": true, "issues": [], "suggestions": []}'},
+                ],
+            )
+            retry_text = _strip_markdown_json(retry_response.content[0].text.strip())
+            review = json.loads(retry_text)
+            logger.info("Retry succeeded — got valid JSON")
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"Retry also failed: {e}")
+
+    # If ALL parsing failed, default to FAIL (not pass!) — don't let broken reviews through
+    if review is None:
+        review = {
+            "overall_score": 0,
+            "pass": False,
+            "issues": ["QA review could not be parsed — defaulting to FAIL for safety"],
+            "suggestions": ["Re-run QA on this video manually"],
+            "raw_response": response_text[:500],
+        }
+        logger.warning("Could not parse review — defaulting to FAIL")
+
+    # Coerce overall_score to float (Claude sometimes returns strings or ints)
+    raw_score = review.get("overall_score", 0)
+    try:
+        score = float(raw_score)
+    except (ValueError, TypeError):
+        score = 0.0
+        logger.warning(f"overall_score was not a number ({raw_score!r}), treating as 0")
+
+    review["overall_score"] = score
     review["pass"] = score >= threshold
     review["threshold"] = threshold
 
@@ -212,12 +250,21 @@ Respond in JSON: {{"score": 8, "would_stop_scroll": true, "fix": "suggestion if 
     )
 
     response_text = response.content[0].text.strip()
-    response_text = _strip_markdown_json(response_text)
+    cleaned_text = _strip_markdown_json(response_text)
 
     try:
-        return json.loads(response_text)
+        result = json.loads(cleaned_text)
+        # Coerce score to float
+        raw_score = result.get("score", 0)
+        try:
+            result["score"] = float(raw_score)
+        except (ValueError, TypeError):
+            result["score"] = 0.0
+        return result
     except json.JSONDecodeError:
-        return {"score": 7, "would_stop_scroll": True, "raw": response_text}
+        # Default to FAIL — don't auto-pass unparseable reviews
+        return {"score": 0, "would_stop_scroll": False, "raw": response_text[:500],
+                "issues": ["Could not parse first-frame review — defaulting to fail"]}
 
 
 def save_review(review: dict, output_path: str) -> str:
@@ -229,6 +276,6 @@ def save_review(review: dict, output_path: str) -> str:
 
 
 if __name__ == "__main__":
-    print("QA Reviewer module loaded.")
-    print("Usage: Called by pipeline.py after video assembly.")
-    print("Reviews key frames via Claude Vision and scores quality 1-10.")
+    logger.info("QA Reviewer module loaded.")
+    logger.info("Usage: Called by pipeline.py after video assembly.")
+    logger.info("Reviews key frames via Claude Vision and scores quality 1-10.")

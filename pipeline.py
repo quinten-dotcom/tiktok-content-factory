@@ -36,6 +36,7 @@ import sys
 import json
 import argparse
 import time
+import requests
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -53,6 +54,9 @@ elif _nested_src_dir.exists():
 else:
     sys.path.insert(0, str(_src_dir))
     sys.path.insert(0, str(_nested_src_dir))
+
+from log_config import get_logger
+logger = get_logger("pipeline")
 
 from script_generator import load_app_config, generate_scripts, save_scripts
 from image_generator import (
@@ -106,9 +110,9 @@ def generate_for_app(config_path: str, count: int | None = None) -> list[str]:
     app_name = app_config["app_name"]
     num_videos = count or VIDEOS_PER_DAY
 
-    print(f"\n{'='*60}")
-    print(f"  GENERATING {num_videos} VIDEOS FOR: {app_name}")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"  GENERATING {num_videos} VIDEOS FOR: {app_name}")
+    logger.info(f"{'='*60}")
 
     # Setup output dirs
     today = datetime.now().strftime("%Y-%m-%d")
@@ -118,29 +122,29 @@ def generate_for_app(config_path: str, count: int | None = None) -> list[str]:
     videos_dir = base_dir / "videos"
 
     # ─── Step 1: Ensure reference images exist for each persona ──────
-    print("\n[1/6] Checking persona reference images...")
+    logger.info("\n[1/6] Checking persona reference images...")
     REFERENCE_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
     for persona in app_config["personas"]:
         ref_path = REFERENCE_IMAGES_DIR / f"{app_slug}_{persona['id']}.png"
         if not ref_path.exists():
-            print(f"  Generating reference image for {persona['name']}...")
+            logger.info(f"  Generating reference image for {persona['name']}...")
             generate_reference_image(persona, str(ref_path))
         else:
-            print(f"  Reference image exists for {persona['name']}")
+            logger.info(f"  Reference image exists for {persona['name']}")
 
     # ─── Step 2: Generate scripts ────────────────────────────────────
-    print(f"\n[2/6] Generating {num_videos} scripts...")
+    logger.info(f"\n[2/6] Generating {num_videos} scripts...")
     scripts = generate_scripts(app_config, count=num_videos)
     script_paths = save_scripts(scripts, str(scripts_dir))
-    print(f"  Generated {len(scripts)} scripts")
+    logger.info(f"  Generated {len(scripts)} scripts")
 
     # ─── Step 3-6: Process each script ───────────────────────────────
     video_paths = []
     scheduler = UploadScheduler()
 
     for i, script in enumerate(scripts):
-        print(f"\n--- Video {i+1}/{len(scripts)}: {script.get('title', 'Untitled')} ---")
+        logger.info(f"\n--- Video {i+1}/{len(scripts)}: {script.get('title', 'Untitled')} ---")
 
         video_dir = base_dir / f"video_{i:03d}"
         video_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +152,7 @@ def generate_for_app(config_path: str, count: int | None = None) -> list[str]:
         success = False
         for attempt in range(MAX_RETRIES + 1):
             if attempt > 0:
-                print(f"  Retry {attempt}/{MAX_RETRIES}...")
+                logger.warning(f"  Retry {attempt}/{MAX_RETRIES}...")
 
             try:
                 video_path = _process_single_video(
@@ -163,33 +167,35 @@ def generate_for_app(config_path: str, count: int | None = None) -> list[str]:
                 if video_path:
                     video_paths.append(video_path)
 
-                    # Queue for upload
-                    scheduler.queue_video(
+                    # Queue for upload (validates file before adding)
+                    queued = scheduler.queue_video(
                         video_path=video_path,
                         account_handle=app_config["tiktok_handle"],
                         title=script.get("title", ""),
                         description=script.get("description", ""),
                         hashtags=script.get("hashtags", []),
                     )
-                    print(f"  Queued for upload!")
-                    success = True
+                    if queued:
+                        success = True
+                    else:
+                        logger.warning(f"  WARNING: Video created but failed queue validation")
                     break
 
             except Exception as e:
-                print(f"  ERROR: {e}")
+                logger.error(f"  ERROR: {e}", exc_info=True)
                 if attempt == MAX_RETRIES:
-                    print(f"  SKIPPING video after {MAX_RETRIES} retries")
+                    logger.error(f"  SKIPPING video after {MAX_RETRIES} retries")
 
         if not success:
-            print(f"  FAILED: Could not generate video {i+1}")
+            logger.error(f"  FAILED: Could not generate video {i+1}")
 
     # Schedule uploads
-    print(f"\n[DONE] Generated {len(video_paths)}/{len(scripts)} videos for {app_name}")
+    logger.info(f"\n[DONE] Generated {len(video_paths)}/{len(scripts)} videos for {app_name}")
     scheduled = scheduler.schedule_daily_uploads(
         app_config["tiktok_handle"],
         videos_per_day=num_videos,
     )
-    print(f"  Scheduled {len(scheduled)} uploads for today")
+    logger.info(f"  Scheduled {len(scheduled)} uploads for today")
 
     return video_paths
 
@@ -208,7 +214,7 @@ def _process_single_video(
     persona_id = persona.get("id", "default")
 
     # ─── Step 3: Generate images ─────────────────────────────────
-    print(f"  [3/6] Generating images...")
+    logger.info(f"  [3/6] Generating images...")
     images_dir = video_dir / "images"
 
     ref_path = REFERENCE_IMAGES_DIR / f"{app_slug}_{persona_id}.png"
@@ -223,7 +229,7 @@ def _process_single_video(
     )
 
     # ─── Step 4: Generate voiceover ──────────────────────────────
-    print(f"  [4/6] Generating voiceover...")
+    logger.info(f"  [4/6] Generating voiceover...")
     voice_dir = video_dir / "audio"
     voiceover_path = generate_voiceover_for_script(
         script=script,
@@ -232,7 +238,7 @@ def _process_single_video(
     )
 
     # ─── Step 5: Generate subtitles + timing ─────────────────────
-    print(f"  [5/6] Generating subtitles...")
+    logger.info(f"  [5/6] Generating subtitles...")
     if voiceover_path:
         words = generate_word_timestamps(voiceover_path)
         lines = group_words_into_lines(words)
@@ -253,7 +259,7 @@ def _process_single_video(
     save_subtitle_data(words, lines, slide_timings, str(video_dir))
 
     # ─── Step 6: Assemble video ──────────────────────────────────
-    print(f"  [6/6] Assembling video...")
+    logger.info(f"  [6/6] Assembling video...")
     videos_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = int(time.time())
@@ -271,7 +277,7 @@ def _process_single_video(
 
     # ─── QA Review ───────────────────────────────────────────────
     if QA_THRESHOLD > 0:
-        print(f"  [QA] Reviewing video quality...")
+        logger.info(f"  [QA] Reviewing video quality...")
         frames_dir = video_dir / "qa_frames"
         frame_paths = extract_key_frames(video_path, str(frames_dir))
 
@@ -286,11 +292,16 @@ def _process_single_video(
         score = review.get("overall_score", 0)
         passed = review.get("pass", False)
 
-        print(f"  [QA] Score: {score}/10 — {'PASS' if passed else 'FAIL'}")
+        logger.info(f"  [QA] Score: {score}/10 — {'PASS' if passed else 'FAIL'}")
 
         if not passed:
-            print(f"  [QA] Video below threshold ({QA_THRESHOLD}). Will retry.")
-            os.remove(video_path)
+            # Keep the video in the vault (don't delete!) — rename to mark as failed
+            failed_path = video_path.replace(".mp4", "_FAILED.mp4")
+            try:
+                os.rename(video_path, failed_path)
+                logger.warning(f"  [QA] Video below threshold ({QA_THRESHOLD}). Saved to vault as: {Path(failed_path).name}")
+            except OSError:
+                logger.warning(f"  [QA] Video below threshold ({QA_THRESHOLD}). Kept at: {Path(video_path).name}")
             return None
 
     return video_path
@@ -304,34 +315,44 @@ def upload_pending():
     pending = scheduler.get_pending_uploads()
 
     if not pending:
-        print("No pending uploads ready.")
+        logger.info("No pending uploads ready.")
         return
 
-    print(f"\nFound {len(pending)} videos ready to upload:")
+    # Show queue status for visibility
+    status = scheduler.get_queue_status()
+    logger.info(f"\n[UPLOAD] Queue status: {status}")
+    logger.info(f"[UPLOAD] Found {len(pending)} videos ready to upload:")
 
     for entry in pending:
         account = entry["account"]
-        title = entry["title"]
+        title = entry.get("title", "Untitled")
+        attempt = entry.get("attempt_count", 0) + 1
 
-        # Check daily limit
+        # Check daily limit (rolling 24h window)
         daily_count = scheduler.get_daily_upload_count(account)
         if daily_count >= 15:
-            print(f"  SKIP {account}: Daily limit reached ({daily_count}/15)")
+            logger.warning(f"  SKIP {account}: Daily limit reached ({daily_count}/15 in last 24h)")
             continue
 
-        print(f"  Uploading: {title} → {account}")
+        logger.info(f"  Uploading (attempt {attempt}): {title} → {account}")
+
+        # Validate video file still exists
+        video_path = entry["video_path"]
+        if not os.path.exists(video_path):
+            scheduler.mark_failed(entry, f"Video file not found: {video_path}")
+            continue
+
+        if os.path.getsize(video_path) < 10000:
+            scheduler.mark_failed(entry, f"Video file too small ({os.path.getsize(video_path)} bytes)")
+            continue
 
         try:
             import requests as req
 
             api_key = os.environ.get("UPLOADPOST_API_KEY")
             if not api_key:
-                print(f"    SKIP: Upload-Post API key not configured. Set UPLOADPOST_API_KEY in .env")
-                continue
-
-            video_path = entry["video_path"]
-            if not os.path.exists(video_path):
-                print(f"    SKIP: Video file not found: {video_path}")
+                logger.warning(f"    SKIP: Upload-Post API key not configured. Set UPLOADPOST_API_KEY in .env")
+                # Don't mark as failed — this is a config issue, not a video issue
                 continue
 
             with open(video_path, "rb") as f:
@@ -347,12 +368,17 @@ def upload_pending():
             if response.status_code in (200, 201):
                 result = response.json()
                 scheduler.mark_uploaded(entry, result)
-                print(f"    Done! ({daily_count + 1}/15 today)")
+                logger.info(f"    Done! ({daily_count + 1}/15 in last 24h)")
             else:
-                print(f"    FAILED: Upload-Post returned {response.status_code}: {response.text[:200]}")
+                error_msg = f"Upload-Post returned {response.status_code}: {response.text[:200]}"
+                scheduler.mark_failed(entry, error_msg)
 
+        except requests.exceptions.Timeout:
+            scheduler.mark_failed(entry, "Upload timed out after 300 seconds")
+        except requests.exceptions.ConnectionError as e:
+            scheduler.mark_failed(entry, f"Connection error: {e}")
         except Exception as e:
-            print(f"    ERROR: {e}")
+            scheduler.mark_failed(entry, f"Unexpected error: {e}")
 
 
 # ─── DAILY RUN ───────────────────────────────────────────────────────────────
@@ -363,14 +389,14 @@ def daily_run():
     configs = list(config_dir.glob("*.json"))
 
     if not configs:
-        print("No app configs found in config/")
+        logger.info("No app configs found in config/")
         return
 
-    print(f"\n{'#'*60}")
-    print(f"  DAILY RUN: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"  Apps: {len(configs)} | Videos/app: {VIDEOS_PER_DAY}")
-    print(f"  Total videos: {len(configs) * VIDEOS_PER_DAY}")
-    print(f"{'#'*60}")
+    logger.info(f"\n{'#'*60}")
+    logger.info(f"  DAILY RUN: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    logger.info(f"  Apps: {len(configs)} | Videos/app: {VIDEOS_PER_DAY}")
+    logger.info(f"  Total videos: {len(configs) * VIDEOS_PER_DAY}")
+    logger.info(f"{'#'*60}")
 
     all_videos = []
     for config_path in configs:
@@ -378,16 +404,16 @@ def daily_run():
             videos = generate_for_app(str(config_path))
             all_videos.extend(videos)
         except Exception as e:
-            print(f"\nERROR processing {config_path.name}: {e}")
+            logger.error(f"\nERROR processing {config_path.name}: {e}", exc_info=True)
             continue
 
-    print(f"\n{'='*60}")
-    print(f"  GENERATION COMPLETE")
-    print(f"  Total videos created: {len(all_videos)}")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"  GENERATION COMPLETE")
+    logger.info(f"  Total videos created: {len(all_videos)}")
+    logger.info(f"{'='*60}")
 
     # Now upload any that are ready
-    print("\nStarting uploads...")
+    logger.info("\nStarting uploads...")
     upload_pending()
 
 
@@ -395,15 +421,15 @@ def daily_run():
 
 def onboard_app():
     """Interactive setup for a new app."""
-    print("\n=== ONBOARD NEW APP ===\n")
+    logger.info("\n=== ONBOARD NEW APP ===\n")
 
     app_name = input("App name: ")
     app_desc = input("One-line description: ")
     niche = input("Niche (e.g., productivity, fitness, finance): ")
     tiktok_handle = input("TikTok handle (e.g., @myapp): ")
 
-    print("\nContent pillars (what topics should videos cover)?")
-    print("Enter one per line, empty line to finish:")
+    logger.info("\nContent pillars (what topics should videos cover)?")
+    logger.info("Enter one per line, empty line to finish:")
     pillars = []
     while True:
         p = input("  > ")
@@ -431,13 +457,13 @@ def onboard_app():
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    print(f"\nConfig saved: {config_path}")
-    print("\nGenerating 3 sample videos for review...")
+    logger.info(f"\nConfig saved: {config_path}")
+    logger.info("\nGenerating 3 sample videos for review...")
 
     generate_for_app(config_path, count=3)
 
-    print(f"\nDone! Review the sample videos in output/{slug}/")
-    print("If they look good, the app is ready for daily generation.")
+    logger.info(f"\nDone! Review the sample videos in output/{slug}/")
+    logger.info("If they look good, the app is ready for daily generation.")
 
 
 # ─── CLI ─────────────────────────────────────────────────────────────────────

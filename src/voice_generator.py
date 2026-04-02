@@ -11,6 +11,9 @@ Supports two engines:
 import os
 import subprocess
 from pathlib import Path
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def generate_voiceover_elevenlabs(
@@ -19,16 +22,12 @@ def generate_voiceover_elevenlabs(
     voice_id: str = "21m00Tcm4TlvDq8ikWAM",
     speaking_speed: float = 1.0,
     api_key: str | None = None,
+    stability: float = 0.5,
+    similarity: float = 0.75,
+    style: float = 0.0,
 ) -> str:
     """
     Generate voiceover using ElevenLabs API.
-
-    Args:
-        text: The text to speak
-        output_path: Where to save the MP3/WAV file
-        voice_id: ElevenLabs voice ID
-        speaking_speed: Playback speed multiplier (1.0 = normal)
-        api_key: ElevenLabs API key
     """
     import requests
 
@@ -44,8 +43,9 @@ def generate_voiceover_elevenlabs(
             "text": text,
             "model_id": "eleven_turbo_v2_5",
             "voice_settings": {
-                "stability": 0.5,
-                "similarity_boost": 0.75,
+                "stability": stability,
+                "similarity_boost": similarity,
+                "style": style,
                 "speed": speaking_speed,
             },
         },
@@ -126,9 +126,16 @@ def generate_voiceover(
     speed = voice_config.get("speaking_speed", 1.0)
 
     if engine == "elevenlabs":
-        voice_id = voice_config.get("elevenlabs_voice_id", "21m00Tcm4TlvDq8ikWAM")
+        voice_id_raw = voice_config.get("elevenlabs_voice_id", "21m00Tcm4TlvDq8ikWAM")
+        # Support multi-voice rotation: IDs separated by newlines or commas
+        import random as _rng
+        voice_ids = [v.strip() for v in voice_id_raw.replace(",", "\n").split("\n") if v.strip()]
+        voice_id = _rng.choice(voice_ids) if voice_ids else "21m00Tcm4TlvDq8ikWAM"
         return generate_voiceover_elevenlabs(
-            text, output_path, voice_id=voice_id, speaking_speed=speed, api_key=api_key
+            text, output_path, voice_id=voice_id, speaking_speed=speed, api_key=api_key,
+            stability=float(voice_config.get("stability", 0.5)),
+            similarity=float(voice_config.get("similarity", 0.75)),
+            style=float(voice_config.get("style", 0)),
         )
     elif engine == "kokoro":
         voice = voice_config.get("kokoro_voice", "af_sarah")
@@ -138,7 +145,7 @@ def generate_voiceover(
             # Fall back to ElevenLabs if kokoro isn't installed
             elevenlabs_key = api_key or os.environ.get("ELEVENLABS_API_KEY")
             if elevenlabs_key:
-                print(f"    Kokoro failed ({kokoro_err}), falling back to ElevenLabs", flush=True)
+                logger.warning(f"Kokoro failed ({kokoro_err}), falling back to ElevenLabs")
                 voice_id = voice_config.get("elevenlabs_voice_id", "21m00Tcm4TlvDq8ikWAM")
                 return generate_voiceover_elevenlabs(
                     text, output_path, voice_id=voice_id, speaking_speed=speed, api_key=elevenlabs_key
@@ -153,6 +160,7 @@ def generate_voiceover_for_script(
     output_dir: str,
     engine: str = "elevenlabs",
     api_key: str | None = None,
+    voice_tuning: dict | None = None,
 ) -> str:
     """
     Generate the full voiceover for an entire script.
@@ -166,22 +174,26 @@ def generate_voiceover_for_script(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    voice_config = script.get("persona", {}).get("voice_config", {})
+    # Agent voice config (from creative) takes priority over script persona config
+    voice_config = voice_tuning if voice_tuning else script.get("persona", {}).get("voice_config", {})
+    if voice_config.get("elevenlabs_voice_id"):
+        logger.info(f"Using ElevenLabs voice: {voice_config['elevenlabs_voice_id']}")
 
     # Check if this is a no-voiceover video (trending sound style)
     if not script.get("has_voiceover", True):
-        print("    Skipping voiceover (trending sound format)")
+        logger.info("Skipping voiceover (trending sound format)")
         return None
 
     # Generate per-slide audio clips for precise timing
-    slide_audio_paths = []
+    slide_audio = []
     for i, slide in enumerate(script["slides"]):
         vo_text = slide.get("voiceover", "")
         if not vo_text.strip():
+            slide_audio.append({"slide_index": i, "path": None, "duration": 0})
             continue
 
         slide_path = str(out / f"slide_voice_{i:02d}.wav")
-        print(f"    Generating voiceover for slide {i + 1}...")
+        logger.info(f"Generating voiceover for slide {i + 1}...")
 
         generate_voiceover(
             vo_text,
@@ -190,7 +202,20 @@ def generate_voiceover_for_script(
             engine=engine,
             api_key=api_key,
         )
-        slide_audio_paths.append(slide_path)
+
+        # Get actual audio duration
+        dur = 0
+        try:
+            import subprocess as _sp
+            probe = _sp.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", slide_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            dur = float(probe.stdout.strip())
+        except Exception:
+            dur = 3.0  # fallback
+        slide_audio.append({"slide_index": i, "path": slide_path, "duration": round(dur, 3)})
 
     # Also generate one continuous voiceover for the full script
     full_text = " ".join(
@@ -199,7 +224,7 @@ def generate_voiceover_for_script(
     full_path = str(out / "full_voiceover.wav")
     generate_voiceover(full_text, full_path, voice_config, engine=engine, api_key=api_key)
 
-    return full_path
+    return {"full_path": full_path, "slide_audio": slide_audio}
 
 
 if __name__ == "__main__":
@@ -208,11 +233,11 @@ if __name__ == "__main__":
     load_dotenv()
 
     test_text = "Hey guys, I found this app that completely changed how I study. Trust me on this — link in bio."
-    print("Generating test voiceover...")
+    logger.info("Generating test voiceover...")
     generate_voiceover(
         test_text,
         "output/test_voice.wav",
         voice_config={"elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM", "speaking_speed": 1.1},
         engine=os.environ.get("VOICE_ENGINE", "elevenlabs"),
     )
-    print("Done!")
+    logger.info("Done!")

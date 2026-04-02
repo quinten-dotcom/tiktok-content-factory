@@ -9,6 +9,9 @@ in the TikTok style (highlighted word, big font, bottom third).
 
 import json
 from pathlib import Path
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 def generate_word_timestamps(audio_path: str, model_size: str = "base") -> list[dict]:
@@ -185,11 +188,11 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1:
         audio_path = sys.argv[1]
-        print(f"Generating subtitles for: {audio_path}")
+        logger.info(f"Generating subtitles for: {audio_path}")
         words = generate_word_timestamps(audio_path)
         lines = group_words_into_lines(words)
-        print(f"Found {len(words)} words in {len(lines)} lines")
+        logger.info(f"Found {len(words)} words in {len(lines)} lines")
         for line in lines:
-            print(f"  [{line['start']:.1f}s - {line['end']:.1f}s] {line['text']}")
+            logger.info(f"  [{line['start']:.1f}s - {line['end']:.1f}s] {line['text']}")
     else:
-        print("Usage: python subtitle_generator.py <audio_file>")
+        logger.error("Usage: python subtitle_generator.py <audio_file>")

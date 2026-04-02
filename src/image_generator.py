@@ -16,11 +16,14 @@ import requests
 from pathlib import Path
 from PIL import Image, ImageEnhance, ImageFilter
 from io import BytesIO
+from log_config import get_logger
 
 try:
     import fal_client
 except ImportError:
     fal_client = None
+
+logger = get_logger(__name__)
 
 
 def generate_image_schnell(
@@ -160,11 +163,11 @@ def _poll_fal_result(request_id: str, api_key: str, max_wait: int = 120, model_p
         try:
             status = resp.json()
         except Exception:
-            print(f"fal.ai returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}", flush=True)
+            logger.warning(f"fal.ai returned non-JSON (HTTP {resp.status_code}): {resp.text[:200]}")
             if resp.status_code == 401:
                 raise Exception("fal.ai API key is invalid or expired. Check FAL_KEY in .env")
             if resp.status_code == 429:
-                print("fal.ai rate limited, waiting 10s...", flush=True)
+                logger.info("fal.ai rate limited, waiting 10s...")
                 time.sleep(10)
                 continue
             time.sleep(3)
@@ -291,7 +294,7 @@ def generate_images_for_script(
         img_path = str(out / f"slide_{i:02d}.png")
         prompt = slide["image_prompt"]
 
-        print(f"    Generating image {i + 1}/{len(script['slides'])}...")
+        logger.info(f"    Generating image {i + 1}/{len(script['slides'])}...")
 
         if engine == "flux_kontext" and reference_image_path:
             generate_image_kontext(prompt, reference_image_path, img_path, api_key=api_key)
@@ -317,6 +320,6 @@ if __name__ == "__main__":
     test_persona = {
         "image_prompt_prefix": "Portrait photo of a 24-year-old woman with shoulder-length brown hair, warm brown eyes, friendly smile",
     }
-    print("Generating test reference image...")
+    logger.info("Generating test reference image...")
     generate_reference_image(test_persona, "output/test_reference.png")
-    print("Done!")
+    logger.info("Done!")

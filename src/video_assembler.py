@@ -18,6 +18,7 @@ import os
 import random
 import json
 from pathlib import Path
+from log_config import get_logger
 
 from moviepy import (
     ImageClip,
@@ -30,6 +31,7 @@ from moviepy import (
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
+logger = get_logger(__name__)
 
 # ─── CONSTANTS ───────────────────────────────────────────────────────────────
 
@@ -496,7 +498,7 @@ def assemble_video(
         logger=None,  # Suppress moviepy's verbose output
     )
 
-    print(f"    Video saved: {output_path}")
+    logger.info(f"    Video saved: {output_path}")
     return output_path
 
 
@@ -531,7 +533,17 @@ def extract_key_frames(video_path: str, output_dir: str, num_frames: int = 5) ->
     return frame_paths
 
 
+def generate_thumbnail(video_path: str, output_path: str, time_offset: float = 1.0):
+    """Extract a single frame as a thumbnail image."""
+    import subprocess
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", str(time_offset), "-i", video_path,
+         "-frames:v", "1", "-q:v", "2", output_path],
+        capture_output=True, timeout=15,
+    )
+
+
 if __name__ == "__main__":
-    print("Video assembler module loaded.")
-    print(f"Output: {VIDEO_WIDTH}x{VIDEO_HEIGHT} @ {FPS}fps")
-    print("Run via pipeline.py for full video generation.")
+    logger.info("Video assembler module loaded.")
+    logger.info(f"Output: {VIDEO_WIDTH}x{VIDEO_HEIGHT} @ {FPS}fps")
+    logger.info("Run via pipeline.py for full video generation.")

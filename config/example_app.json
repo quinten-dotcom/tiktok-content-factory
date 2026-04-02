@@ -83,11 +83,21 @@
     }
   ],
 
+  "pricing": {
+    "model": "subscription",
+    "free_tier": "3 free focus sessions per day",
+    "paid_tier": "Unlimited sessions, all ambient sounds, streak analytics, custom timers",
+    "price": "$2.99/month",
+    "annual_price": "$19.99/year",
+    "free_trial": "7-day free trial of Pro",
+    "price_note": "Cancel anytime"
+  },
+
   "cta_variations": [
-    "Link in bio if you want to try it",
-    "I put the link in my bio",
-    "Go grab it — link in bio",
-    "Seriously, link in bio. Thank me later."
+    "Link in bio if you want to try it — it's free to start",
+    "I put the link in my bio, free trial no card needed",
+    "Go grab it — link in bio, $2.99 a month",
+    "Seriously, link in bio. Thank me later. Free trial."
   ],
 
   "hashtag_sets": {

@@ -1,0 +1,180 @@
+{
+  "app_name": "Meals Ai",
+  "app_description": "AI-powered meal planning app that turns the daily 'what's for dinner?' stress into a 2-minute solution with smart grocery lists and pantry scanning",
+  "tiktok_handle": "@mealsai",
+  "niche": "mealprep",
+  "tiktok": {
+    "username": "@mealsai",
+    "upload_post_token": "",
+    "tiktok_business_api": {
+      "client_key": "",
+      "client_secret": "",
+      "access_token": ""
+    }
+  },
+  "app_store_url": "",
+  "play_store_url": "",
+  "link_in_bio_url": "",
+  "ica": {
+    "target_audience": "Parents and busy adults aged 25-45, dual-income households, tech-comfortable but overwhelmed by daily meal decisions",
+    "pain_points": "Standing in grocery store with no plan, kids rejecting dinner after you spent an hour cooking, throwing away expired food you forgot about, Sunday scaries about the week's meals",
+    "desired_outcome": "Walk into the kitchen confident about what to make, have groceries actually match meal plans, feel like a competent adult who has their life together",
+    "tone": "Relatable and slightly chaotic but supportive \u2014 'We've all been there, here's what actually works' with phrases like 'no judgment zone' and 'real life solutions'",
+    "hook_style": "Pain point callouts that make people go 'literally me' plus bold time-saving claims",
+    "platforms": "Instagram Stories, Facebook mom groups, Pinterest recipe boards, Reddit parenting communities"
+  },
+  "content_pillars": [
+    "Pantry chaos to dinner hero transformations using AI scanning",
+    "Grocery store fails vs AI-organized shopping list wins",
+    "Kids actually eating meals planned with the kid-friendly filter",
+    "Sunday meal prep panic vs 2-minute meal planning demos",
+    "Expensive food waste vs smart pantry management"
+  ],
+  "video_styles": {
+    "story_narration": 0.3,
+    "text_heavy_educational": 0.25,
+    "split_screen_comparison": 0.15,
+    "trending_sound_text_only": 0.15,
+    "app_demo_screenrecord": 0.15
+  },
+  "personas": [
+    {
+      "id": "sarah",
+      "name": "Sarah",
+      "archetype": "The Overwhelmed Mom",
+      "description": "34-year-old woman with shoulder-length brown hair often in a messy bun, tired but kind hazel eyes, usually wearing comfortable athleisure or wrinkled button-downs, has that perpetually slightly frazzled but trying-her-best energy",
+      "image_prompt_prefix": "Portrait photo of a 34-year-old woman with brown shoulder-length hair, hazel eyes, slight dark circles showing tiredness, natural skin texture",
+      "voice_config": {
+        "elevenlabs_voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "kokoro_voice": "af_sarah",
+        "speaking_speed": 1.1
+      },
+      "writing_style": {
+        "tone": "exhausted but relatable, self-deprecating",
+        "energy": "medium",
+        "vocabulary": "mom brain moments, 'literally cannot even', 'send help', 'why is adulting so hard'",
+        "humor": "laughing to keep from crying, finds comedy in chaos",
+        "avoid": [
+          "being put-together",
+          "having it all figured out",
+          "perfectionist language"
+        ]
+      }
+    },
+    {
+      "id": "marcus",
+      "name": "Marcus",
+      "archetype": "The Efficiency Optimizer",
+      "description": "29-year-old Black man with a neat fade haircut, warm brown eyes behind stylish glasses, typically in well-fitted casual button-ups or clean hoodies, has that organized millennial energy",
+      "image_prompt_prefix": "Portrait photo of a 29-year-old Black man with a fade haircut, brown eyes, glasses, natural skin texture",
+      "voice_config": {
+        "elevenlabs_voice_id": "29vD33N1CtxCmqQRPOHJ",
+        "kokoro_voice": "am_michael",
+        "speaking_speed": 1.15
+      },
+      "writing_style": {
+        "tone": "solution-focused and slightly nerdy about optimization",
+        "energy": "high",
+        "vocabulary": "game-changer, optimization, streamlined, that's fire, lowkey obsessed",
+        "humor": "dry wit about being extra organized",
+        "avoid": [
+          "being disorganized",
+          "winging it",
+          "chaos acceptance"
+        ]
+      }
+    },
+    {
+      "id": "jade",
+      "name": "Jade",
+      "archetype": "The Wellness Skeptic",
+      "description": "27-year-old Asian woman with long black hair often in a low ponytail, bright dark eyes, usually in cozy oversized sweaters or trendy cropped tops, has that cool girl who's secretly anxious vibe",
+      "image_prompt_prefix": "Portrait photo of a 27-year-old Asian woman with long black hair, dark eyes, natural skin texture",
+      "voice_config": {
+        "elevenlabs_voice_id": "EXAVITQu4vr4xnSDxMaL",
+        "kokoro_voice": "af_bella",
+        "speaking_speed": 1.0
+      },
+      "writing_style": {
+        "tone": "slightly sarcastic but ultimately hopeful",
+        "energy": "medium",
+        "vocabulary": "not gonna lie, actually slaps, I'm shook, periodt, this ain't it chief",
+        "humor": "roasting wellness culture while secretly wanting it to work",
+        "avoid": [
+          "toxic positivity",
+          "hustle culture",
+          "being too earnest"
+        ]
+      }
+    }
+  ],
+  "pricing": {
+    "model": "freemium",
+    "free_tier": "Basic meal plans, 1 week at a time, limited recipes",
+    "paid_tier": "Unlimited plans, pantry scanning, kid-friendly filter, smart grocery lists",
+    "price": "$4.99/week",
+    "annual_price": "$39.99/year",
+    "free_trial": "7-day free trial",
+    "price_note": "Cancel anytime. Free trial requires no payment upfront."
+  },
+
+  "cta_variations": [
+    "Link in bio if you're tired of the dinner struggle — it's free to try",
+    "Go try it \u2014 link is in my bio, 7 days free",
+    "Link in bio and thank me later — free trial, no card needed",
+    "Get it in my bio, $4.99 a week but the free trial is 7 days"
+  ],
+  "hashtag_sets": {
+    "broad": [
+      "#mealprep",
+      "#dinnerideas",
+      "#momhacks"
+    ],
+    "medium": [
+      "#mealplanning",
+      "#groceryhaul",
+      "#familydinner",
+      "#busyparents",
+      "#kitchenhacks"
+    ],
+    "niche": [
+      "#mealplanningapp",
+      "#aimealplanning",
+      "#pantryorganization",
+      "#grocerylisthack"
+    ]
+  },
+  "color_grade": {
+    "warmth": 1.08,
+    "contrast": 1.05,
+    "saturation": 0.95,
+    "vignette_strength": 0.15
+  },
+  "text_style": {
+    "font": "Arial Bold",
+    "hook_font_size": 82,
+    "body_font_size": 58,
+    "subtitle_font_size": 72,
+    "text_color": "#FFFFFF",
+    "text_stroke_color": "#000000",
+    "text_stroke_width": 5,
+    "highlight_color": "#FFD700",
+    "subtitle_bg_color": "rgba(0,0,0,0.85)",
+    "subtitle_bg_radius": 20
+  },
+  "videos_per_day": 1,
+  "image_engine": "flux_2_pro",
+  "voice_engine": "elevenlabs",
+  "video_engine": "moviepy",
+  "qa_threshold": 6.5,
+  "tuning": {
+    "ken_burns_zoom": 1.05,
+    "ken_burns_pan": 15,
+    "music_volume": 0.12,
+    "crossfade_duration": 0.3,
+    "voice_stability": 0.3,
+    "voice_style": 0.45,
+    "voice_similarity": 0.8,
+    "qa_threshold": 6.5
+  }
+}

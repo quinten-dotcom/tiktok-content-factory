@@ -19,6 +19,9 @@ import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 import random
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 # ─── TIKTOK CONTENT POSTING API (OFFICIAL) ──────────────────────────────────
@@ -195,12 +198,17 @@ class TikTokBrowserUploader:
 
 # ─── UPLOAD SCHEDULER ────────────────────────────────────────────────────────
 
+MAX_UPLOAD_RETRIES = 3  # Stop retrying after this many failures
+
 class UploadScheduler:
     """
     Manages the upload queue for multiple TikTok accounts.
 
     Spaces uploads throughout the day with random jitter to appear natural.
-    Respects TikTok's 15/day rate limit per account.
+    Respects TikTok's 15/day rolling-window rate limit per account.
+
+    Queue lifecycle: queued → scheduled → uploaded (success) or failed (after max retries).
+    Completed/failed entries are archived to keep the queue directory clean.
     """
 
     # Optimal posting times (hours in local time)
@@ -209,7 +217,30 @@ class UploadScheduler:
     def __init__(self, queue_dir: str = "output/upload_queue"):
         self.queue_dir = Path(queue_dir)
         self.queue_dir.mkdir(parents=True, exist_ok=True)
+        self.archive_dir = self.queue_dir / "archive"
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.queue_dir / "upload_log.json"
+
+    def _safe_read_json(self, file_path: Path) -> dict | None:
+        """Read a JSON file safely — returns None if file is corrupt or being written."""
+        try:
+            with open(file_path) as fh:
+                return json.load(fh)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Could not read {file_path.name}: {e}")
+            return None
+
+    def _safe_write_json(self, file_path: Path, data: dict):
+        """Write JSON atomically — write to temp file then rename to avoid corruption."""
+        tmp_path = file_path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, "w") as f:
+                json.dump(data, f, indent=2)
+            tmp_path.replace(file_path)  # Atomic on most filesystems
+        except OSError as e:
+            logger.error(f"Error writing {file_path.name}: {e}")
+            if tmp_path.exists():
+                tmp_path.unlink()
 
     def queue_video(
         self,
@@ -218,8 +249,17 @@ class UploadScheduler:
         title: str,
         description: str,
         hashtags: list[str],
-    ) -> dict:
-        """Add a video to the upload queue."""
+    ) -> dict | None:
+        """Add a video to the upload queue. Validates the video file exists and is non-empty."""
+        # Validate video file before queuing
+        if not os.path.exists(video_path):
+            logger.error(f"Cannot queue — video file not found: {video_path}")
+            return None
+        file_size = os.path.getsize(video_path)
+        if file_size < 10000:  # Less than 10KB is definitely broken
+            logger.error(f"Cannot queue — video file too small ({file_size} bytes): {video_path}")
+            return None
+
         entry = {
             "video_path": video_path,
             "account": account_handle,
@@ -229,12 +269,14 @@ class UploadScheduler:
             "queued_at": datetime.now().isoformat(),
             "status": "queued",
             "scheduled_time": None,
+            "attempt_count": 0,
+            "last_error": None,
         }
 
         # Save to queue
         queue_file = self.queue_dir / f"{account_handle.lstrip('@')}_{int(time.time())}.json"
-        with open(queue_file, "w") as f:
-            json.dump(entry, f, indent=2)
+        self._safe_write_json(queue_file, entry)
+        logger.info(f"Queued: {title} ({file_size // 1024}KB)")
 
         return entry
 
@@ -243,37 +285,64 @@ class UploadScheduler:
         Assign posting times to queued videos for an account.
 
         Distributes uploads across optimal hours with random jitter.
+        Only schedules FUTURE times — never assigns a time that's already past.
+        Processes up to videos_per_day, prioritizing oldest queued videos first.
         """
-        # Find queued videos for this account
+        account_key = account_handle.lstrip("@")
+
+        # Find queued videos for this account (oldest first)
         queued = []
-        for f in sorted(self.queue_dir.glob(f"{account_handle.lstrip('@')}_*.json")):
-            with open(f) as fh:
-                entry = json.load(fh)
-            if entry["status"] == "queued":
+        for f in sorted(self.queue_dir.glob(f"{account_key}_*.json")):
+            entry = self._safe_read_json(f)
+            if entry and entry.get("status") == "queued":
                 queued.append((f, entry))
 
         if not queued:
             return []
 
-        # Pick posting times from peak hours with jitter
-        today = datetime.now().replace(second=0, microsecond=0)
-        available_hours = self.PEAK_HOURS[:videos_per_day]
-        random.shuffle(available_hours)
+        # Build list of future posting times
+        now = datetime.now().replace(second=0, microsecond=0)
+        future_slots = []
+
+        # Today's remaining peak hours
+        for hour in self.PEAK_HOURS:
+            slot_time = now.replace(hour=hour, minute=30)
+            if slot_time > now + timedelta(minutes=15):  # At least 15min in the future
+                future_slots.append(slot_time)
+
+        # If not enough slots today, add tomorrow's peak hours
+        if len(future_slots) < videos_per_day:
+            tomorrow = now + timedelta(days=1)
+            for hour in self.PEAK_HOURS:
+                slot_time = tomorrow.replace(hour=hour, minute=30)
+                future_slots.append(slot_time)
+
+        random.shuffle(future_slots)
+        future_slots = sorted(future_slots[:videos_per_day])  # Sort chronologically
 
         scheduled = []
         for i, (file_path, entry) in enumerate(queued[:videos_per_day]):
-            if i < len(available_hours):
-                hour = available_hours[i]
-                jitter_minutes = random.randint(-12, 12)
-                post_time = today.replace(hour=hour, minute=max(0, 30 + jitter_minutes))
+            if i >= len(future_slots):
+                break
 
-                entry["scheduled_time"] = post_time.isoformat()
-                entry["status"] = "scheduled"
+            # Add jitter for natural appearance
+            jitter_minutes = random.randint(-12, 12)
+            post_time = future_slots[i] + timedelta(minutes=jitter_minutes)
+            # Ensure jitter doesn't push into the past
+            if post_time <= now:
+                post_time = now + timedelta(minutes=5)
 
-                with open(file_path, "w") as f:
-                    json.dump(entry, f, indent=2)
+            entry["scheduled_time"] = post_time.isoformat()
+            entry["status"] = "scheduled"
 
-                scheduled.append(entry)
+            self._safe_write_json(file_path, entry)
+            scheduled.append(entry)
+            logger.info(f"Scheduled: {entry['title'][:40]} → {post_time.strftime('%Y-%m-%d %H:%M')}")
+
+        # Report any orphaned videos that didn't get scheduled
+        remaining = len(queued) - len(scheduled)
+        if remaining > 0:
+            logger.info(f"Note: {remaining} older queued video(s) not scheduled yet (will be picked up next run)")
 
         return scheduled
 
@@ -283,19 +352,29 @@ class UploadScheduler:
         ready = []
 
         for f in self.queue_dir.glob("*.json"):
-            if f.name == "upload_log.json":
+            if f.name == "upload_log.json" or f.suffix == ".tmp":
                 continue
 
-            with open(f) as fh:
-                entry = json.load(fh)
-
-            if entry["status"] != "scheduled":
+            entry = self._safe_read_json(f)
+            if not entry:
                 continue
 
-            if account_handle and entry["account"] != account_handle:
+            if entry.get("status") != "scheduled":
                 continue
 
-            scheduled = datetime.fromisoformat(entry["scheduled_time"])
+            if account_handle and entry.get("account") != account_handle:
+                continue
+
+            scheduled_time = entry.get("scheduled_time")
+            if not scheduled_time:
+                logger.warning(f"Missing scheduled_time in {f.name}, skipping")
+                continue
+            try:
+                scheduled = datetime.fromisoformat(scheduled_time)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid scheduled_time in {f.name}, skipping")
+                continue
+
             if scheduled <= now:
                 entry["_file_path"] = str(f)
                 ready.append(entry)
@@ -303,56 +382,127 @@ class UploadScheduler:
         return ready
 
     def mark_uploaded(self, entry: dict, result: dict):
-        """Mark a queued video as successfully uploaded."""
+        """Mark a video as successfully uploaded and archive it."""
         file_path = entry.get("_file_path")
-        if file_path and os.path.exists(file_path):
-            entry["status"] = "uploaded"
-            entry["uploaded_at"] = datetime.now().isoformat()
-            entry["upload_result"] = result
+        if not file_path or not os.path.exists(file_path):
+            return
 
-            with open(file_path, "w") as f:
-                json.dump(entry, f, indent=2)
+        entry["status"] = "uploaded"
+        entry["uploaded_at"] = datetime.now().isoformat()
+        entry["upload_result"] = result
+        entry.pop("_file_path", None)  # Don't persist internal field
+
+        # Archive the completed entry (move out of active queue)
+        src = Path(file_path)
+        dest = self.archive_dir / src.name
+        self._safe_write_json(dest, entry)
+        try:
+            src.unlink()
+        except OSError:
+            pass
 
         # Log it
         self._log_upload(entry)
+        logger.info(f"Uploaded and archived: {entry.get('title', 'unknown')}")
+
+    def mark_failed(self, entry: dict, error: str):
+        """Mark an upload attempt as failed. Archives permanently after max retries."""
+        file_path = entry.get("_file_path")
+        if not file_path or not os.path.exists(file_path):
+            return
+
+        attempt_count = entry.get("attempt_count", 0) + 1
+        entry["attempt_count"] = attempt_count
+        entry["last_error"] = error
+        entry["last_attempt_at"] = datetime.now().isoformat()
+
+        if attempt_count >= MAX_UPLOAD_RETRIES:
+            # Max retries reached — archive as permanently failed
+            entry["status"] = "failed"
+            entry.pop("_file_path", None)
+            src = Path(file_path)
+            dest = self.archive_dir / src.name
+            self._safe_write_json(dest, entry)
+            try:
+                src.unlink()
+            except OSError:
+                pass
+            self._log_upload(entry)
+            logger.error(f"PERMANENTLY FAILED after {attempt_count} attempts: {entry.get('title', 'unknown')} — {error}")
+        else:
+            # Keep as scheduled for retry — but push scheduled_time forward
+            retry_delay = timedelta(minutes=30 * attempt_count)  # 30min, 60min, 90min...
+            entry["scheduled_time"] = (datetime.now() + retry_delay).isoformat()
+            entry["status"] = "scheduled"
+            self._safe_write_json(Path(file_path), entry)
+            logger.warning(f"Upload failed (attempt {attempt_count}/{MAX_UPLOAD_RETRIES}), retrying in {30 * attempt_count}min: {error[:100]}")
 
     def _log_upload(self, entry: dict):
         """Append to the upload log."""
         log = []
         if self.log_path.exists():
-            with open(self.log_path) as f:
-                log = json.load(f)
+            try:
+                with open(self.log_path) as f:
+                    log = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                log = []
 
         log.append({
-            "account": entry["account"],
-            "title": entry["title"],
+            "account": entry.get("account", "unknown"),
+            "title": entry.get("title", "unknown"),
             "uploaded_at": entry.get("uploaded_at"),
             "status": entry["status"],
+            "attempt_count": entry.get("attempt_count", 1),
+            "error": entry.get("last_error"),
         })
 
-        with open(self.log_path, "w") as f:
-            json.dump(log, f, indent=2)
+        self._safe_write_json(self.log_path, log)
 
     def get_daily_upload_count(self, account_handle: str) -> int:
-        """Check how many uploads an account has done in the last 24 hours."""
+        """Check how many uploads an account has done in the rolling 24-hour window."""
         if not self.log_path.exists():
             return 0
 
-        with open(self.log_path) as f:
-            log = json.load(f)
+        try:
+            with open(self.log_path) as f:
+                log = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return 0
 
+        # Use rolling 24-hour window (not calendar day)
         cutoff = datetime.now() - timedelta(hours=24)
         count = 0
         for entry in log:
-            if entry["account"] == account_handle and entry.get("uploaded_at"):
-                upload_time = datetime.fromisoformat(entry["uploaded_at"])
-                if upload_time > cutoff:
-                    count += 1
+            if entry.get("account") == account_handle and entry.get("uploaded_at") and entry.get("status") == "uploaded":
+                try:
+                    upload_time = datetime.fromisoformat(entry["uploaded_at"])
+                    if upload_time > cutoff:
+                        count += 1
+                except (ValueError, TypeError):
+                    pass
 
         return count
 
+    def get_queue_status(self) -> dict:
+        """Get a summary of the current queue state — useful for debugging."""
+        counts = {"queued": 0, "scheduled": 0, "uploaded": 0, "failed": 0}
+        for f in self.queue_dir.glob("*.json"):
+            if f.name == "upload_log.json" or f.suffix == ".tmp":
+                continue
+            entry = self._safe_read_json(f)
+            if entry:
+                status = entry.get("status", "unknown")
+                counts[status] = counts.get(status, 0) + 1
+        # Count archived
+        for f in self.archive_dir.glob("*.json"):
+            entry = self._safe_read_json(f)
+            if entry:
+                status = entry.get("status", "unknown")
+                counts[f"archived_{status}"] = counts.get(f"archived_{status}", 0) + 1
+        return counts
+
 
 if __name__ == "__main__":
-    print("Uploader module loaded.")
-    print("Supports: TikTok Official API, tiktok-uploader package, Upload-Post API")
-    print("Run via pipeline.py for full upload automation.")
+    logger.info("Uploader module loaded.")
+    logger.info("Supports: TikTok Official API, tiktok-uploader package, Upload-Post API")
+    logger.info("Run via pipeline.py for full upload automation.")

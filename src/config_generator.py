@@ -19,6 +19,9 @@ import re
 import anthropic
 import os
 from pathlib import Path
+from log_config import get_logger
+
+logger = get_logger(__name__)
 
 
 CONFIG_GENERATION_PROMPT = """You are a TikTok marketing strategist. Given an app name and description, generate a COMPLETE content strategy and configuration.
@@ -290,7 +293,7 @@ def save_app_config(config: dict, config_dir: str = "config") -> str:
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
 
-    print(f"Config saved: {path}")
+    logger.info(f"Config saved: {path}")
     return path
 
 
@@ -300,39 +303,39 @@ def onboard_app(app_name: str, app_description: str, folder_path: str = None, ap
 
     Returns the path to the saved config file.
     """
-    print(f"\nGenerating full TikTok strategy for: {app_name}")
-    print(f"Description: {app_description}")
+    logger.info(f"\nGenerating full TikTok strategy for: {app_name}")
+    logger.info(f"Description: {app_description}")
 
     folder_context = None
     if folder_path:
-        print(f"Reading app assets from: {folder_path}")
+        logger.info(f"Reading app assets from: {folder_path}")
         folder_context = read_folder_context(folder_path)
         if folder_context.get("documents") or folder_context.get("images"):
-            print(f"Found {len(folder_context.get('documents', []))} documents and {len(folder_context.get('images', []))} images")
+            logger.info(f"Found {len(folder_context.get('documents', []))} documents and {len(folder_context.get('images', []))} images")
 
-    print("Thinking about content pillars, personas, hashtags, tone...")
+    logger.info("Thinking about content pillars, personas, hashtags, tone...")
 
     config = generate_app_config(app_name, app_description, folder_context=folder_context, api_key=api_key)
 
     path = save_app_config(config)
 
-    # Print summary
-    print(f"\n{'='*50}")
-    print(f"  APP: {config['app_name']}")
-    print(f"  Handle: {config['tiktok_handle']}")
-    print(f"  Niche: {config['niche']}")
-    print(f"{'='*50}")
-    print(f"\n  Content Pillars:")
+    # Log summary
+    logger.info(f"\n{'='*50}")
+    logger.info(f"  APP: {config['app_name']}")
+    logger.info(f"  Handle: {config['tiktok_handle']}")
+    logger.info(f"  Niche: {config['niche']}")
+    logger.info(f"{'='*50}")
+    logger.info(f"\n  Content Pillars:")
     for p in config.get("content_pillars", []):
-        print(f"    - {p}")
-    print(f"\n  Personas:")
+        logger.info(f"    - {p}")
+    logger.info(f"\n  Personas:")
     for p in config.get("personas", []):
-        print(f"    - {p['name']} — {p['archetype']}")
-    print(f"\n  CTAs:")
+        logger.info(f"    - {p['name']} — {p['archetype']}")
+    logger.info(f"\n  CTAs:")
     for c in config.get("cta_variations", []):
-        print(f"    - {c}")
-    print(f"\n  Config saved to: {path}")
-    print(f"  Ready for: python3 pipeline.py generate --app {path}")
+        logger.info(f"    - {c}")
+    logger.info(f"\n  Config saved to: {path}")
+    logger.info(f"  Ready for: python3 pipeline.py generate --app {path}")
 
     return path
 
@@ -367,7 +370,7 @@ def read_folder_context(folder_path: str) -> dict:
                     "content": content[:2000],  # Limit to 2000 chars per file
                 })
             except Exception as e:
-                print(f"Warning: Could not read {file_path}: {e}")
+                logger.warning(f"Could not read {file_path}: {e}")
 
         # Read image files
         elif file_path.suffix.lower() in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
@@ -379,7 +382,7 @@ def read_folder_context(folder_path: str) -> dict:
                     "base64": b64,
                 })
             except Exception as e:
-                print(f"Warning: Could not read image {file_path}: {e}")
+                logger.warning(f"Could not read image {file_path}: {e}")
 
     return {
         "documents": documents[:5],  # Limit to 5 documents
@@ -393,7 +396,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     if len(sys.argv) < 3:
-        print("Usage: python3 config_generator.py \"App Name\" \"One-line description\"")
+        logger.error("Usage: python3 config_generator.py \"App Name\" \"One-line description\"")
         sys.exit(1)
 
     name = sys.argv[1]
